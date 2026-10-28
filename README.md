@@ -98,19 +98,68 @@ The bridge has no login flow and does not handle credentials. Anthropic's [June 
 
 The bridge registers exactly one canonical OMP catalog entry per supported model and passes that model ID unchanged to Claude Code. It does not create context-window aliases, rewrite model IDs, or advertise account-entitlement variants.
 
-Use [`omp-ccwindow`](https://github.com/DevVig/omp-ccwindow) when you want to lower OMP's active context value for status display and compaction timing. That plugin changes OMP's local model clone; it does not change the Claude API model's native context capacity.
+| Mode | Default (unsuffixed) window |
+| ---- | -------- |
+| `"auto"` *(default)* | Per-model measured default. Respects `plan` and `longContextExtraUsage`. |
+| `"1m"` | 1M where the model has a 1M runtime, else its only window. |
+| `"200k"` | 200K where the model has a 200K runtime, else its only window. |
+
+Both windows stay in the picker regardless of this setting (wherever a runtime exists); it only changes which one is the plain, unsuffixed id. So `modelRoles` / `enabledModels` that reference `claude-bridge/claude-opus-4-8` keep working and follow the default.
+
+### Windows offered per model
+
+| Model | 200K entry | 1M entry | `auto` default |
+| ----- | :--------: | :------: | :------------: |
+| `claude-opus-5-5` | ✓ | ✓ | 1M |
+| `claude-opus-5` | ✓ | ✓ | 1M |
+| `claude-opus-4-8` | ✓ | ✓ | 1M |
+| `claude-opus-4-7` | — | ✓ | 1M |
+| `claude-opus-4-6` | ✓ | ✓ | 200K¹ |
+| `claude-fable-5-1` | ✓ | ✓ | 200K |
+| `claude-fable-5` | ✓ | ✓ | 200K |
+| `claude-sonnet-5-5` | ✓ | ✓ | 1M |
+| `claude-sonnet-5` | ✓ | ✓ | 1M |
+| `claude-sonnet-4-6` | ✓ | ✓ | 200K² |
+| `claude-haiku-5-5` | ✓ | ✓ | 200K |
+| `claude-haiku-4-5` | ✓ | — | 200K |
+
+¹ Opus 4.6's `auto` default is 1M when `plan: "max"` or `longContextExtraUsage: true`.
+² Sonnet 4.6's `auto` default is 1M when `longContextExtraUsage: true`.
+
+The suffixed alternate exists only for the window that isn't the default — e.g. under `auto` you get `claude-opus-4-8` (1M) + `claude-opus-4-8-200k`, and under `"200k"` you get `claude-opus-4-8` (200K) + `claude-opus-4-8-1m`.
+
+> Forcing 1M is a *request*: some models may still be **served** 200K by your subscription entitlement. Set `CLAUDE_BRIDGE_DEBUG=1` to log the served window (see [Debugging](#debugging)).
+
+> An invalid `contextWindow` value logs a warning and falls back to `"auto"`, so a typo never breaks startup.
 
 ## Models
 
 The bridge exposes these canonical picker entries:
 
-- `claude-bridge/claude-fable-5`
-- `claude-bridge/claude-opus-4-8`
-- `claude-bridge/claude-opus-4-7`
-- `claude-bridge/claude-opus-4-6`
-- `claude-bridge/claude-sonnet-5`
-- `claude-bridge/claude-sonnet-4-6`
-- `claude-bridge/claude-haiku-4-5`
+| Picker id (auto) | Window |
+| --------- | ------ |
+| `claude-bridge/claude-opus-5-5` | 1M |
+| `claude-bridge/claude-opus-5-5-200k` | 200K |
+| `claude-bridge/claude-opus-5` | 1M |
+| `claude-bridge/claude-opus-5-200k` | 200K |
+| `claude-bridge/claude-fable-5-1` | 200K |
+| `claude-bridge/claude-fable-5-1-1m` | 1M |
+| `claude-bridge/claude-fable-5` | 200K |
+| `claude-bridge/claude-fable-5-1m` | 1M |
+| `claude-bridge/claude-opus-4-8` | 1M |
+| `claude-bridge/claude-opus-4-8-200k` | 200K |
+| `claude-bridge/claude-opus-4-7` | 1M |
+| `claude-bridge/claude-opus-4-6` | 200K (1M on Max / Extra Usage) |
+| `claude-bridge/claude-opus-4-6-1m` | 1M |
+| `claude-bridge/claude-sonnet-5-5` | 1M |
+| `claude-bridge/claude-sonnet-5-5-200k` | 200K |
+| `claude-bridge/claude-sonnet-5` | 1M (supports `xhigh`) |
+| `claude-bridge/claude-sonnet-5-200k` | 200K |
+| `claude-bridge/claude-sonnet-4-6` | 200K (supports `xhigh`) |
+| `claude-bridge/claude-sonnet-4-6-1m` | 1M |
+| `claude-bridge/claude-haiku-5-5` | 200K |
+| `claude-bridge/claude-haiku-5-5-1m` | 1M |
+| `claude-bridge/claude-haiku-4-5` | 200K (cheapest) |
 
 Bash commands issued by Claude Code get a 120-second default timeout (matching Claude Code's default), since OMP's bash has no timeout by default.
 
@@ -172,8 +221,8 @@ Config is read from `~/.omp/agent/claude-bridge.json` (global) and the project O
 | --- | ------- | ----------- |
 | `appendSystemPrompt` | `true` | Append OMP's AGENTS.md and skills. |
 | `settingSources` | — | Claude Code filesystem settings to load; only applied when `appendSystemPrompt: false`. |
-| `strictMcpConfig` | `true` | Ignore filesystem MCP configuration outside the bridge's OMP tool server; Claude.ai cloud MCP auto-discovery is also disabled. |
-| `pathToClaudeCodeExecutable` | — | Path to the `claude` binary, if the bundled one can't run on your OS/filesystem. |
+| `strictMcpConfig` | `true` | Block MCP servers from `~/.claude.json` / `.mcp.json`. Cloud MCP is always blocked. |
+| `pathToClaudeCodeExecutable` | — | Path to the `claude` binary, if the bundled one can't run on your OS/filesystem — also required for model ids newer than the bundled CLI supports (e.g. `claude-opus-5-5` needs Claude Code ≥2.1.280, `claude-fable-5-1` ≥2.1.251). |
 
 ## How it works
 
