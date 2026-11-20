@@ -13,15 +13,26 @@ import { z } from "zod";
 
 export function jsonSchemaPropertyToZod(prop: Record<string, unknown>): z.ZodTypeAny {
 	let base: z.ZodTypeAny;
-	if (Array.isArray(prop.enum)) base = z.enum(prop.enum as [string, ...string[]]);
-	else switch (prop.type) {
+	if (Array.isArray(prop.enum)) {
+		const stringVals = prop.enum.filter((v): v is string => typeof v === "string");
+		if (stringVals.length > 0 && stringVals.length === prop.enum.length) {
+			base = z.enum(stringVals as [string, ...string[]]);
+		} else if (prop.enum.length > 0) {
+			const literals = prop.enum.map((v) => z.literal(v as string | number | boolean | null));
+			base = literals.length === 1 ? literals[0] : z.union([literals[0], literals[1], ...literals.slice(2)]);
+		} else {
+			base = z.never();
+		}
+	} else switch (prop.type) {
 		case "string": base = z.string(); break;
 		case "number": case "integer": base = z.number(); break;
 		case "boolean": base = z.boolean(); break;
-		case "array": base = prop.items
+		case "array": base = prop.items && typeof prop.items === "object"
 			? z.array(jsonSchemaPropertyToZod(prop.items as Record<string, unknown>))
 			: z.array(z.unknown()); break;
-		case "object": base = z.record(z.string(), z.unknown()); break;
+		case "object": base = prop.properties && typeof prop.properties === "object"
+			? z.object(jsonSchemaToZodShape(prop))
+			: z.record(z.string(), z.unknown()); break;
 		default: base = z.unknown();
 	}
 	if (typeof prop.description === "string") base = base.describe(prop.description);

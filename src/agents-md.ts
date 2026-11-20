@@ -12,8 +12,8 @@ import { dirname, join, resolve } from "path";
 
 const GLOBAL_AGENTS_PATH = join(homedir(), ".omp", "agent", "AGENTS.md");
 
-export function resolveAgentsMdPath(): string | undefined {
-	const fromCwd = findAgentsMdInParents(process.cwd());
+export function resolveAgentsMdPath(cwd: string = process.cwd()): string | undefined {
+	const fromCwd = findAgentsMdInParents(cwd);
 	if (fromCwd) return fromCwd;
 	if (existsSync(GLOBAL_AGENTS_PATH)) return GLOBAL_AGENTS_PATH;
 	return undefined;
@@ -31,8 +31,8 @@ export function findAgentsMdInParents(startDir: string): string | undefined {
 	return undefined;
 }
 
-export function extractAgentsAppend(): string | undefined {
-	const agentsPath = resolveAgentsMdPath();
+export function extractAgentsAppend(cwd: string = process.cwd()): string | undefined {
+	const agentsPath = resolveAgentsMdPath(cwd);
 	if (!agentsPath) return undefined;
 	try {
 		const content = readFileSync(agentsPath, "utf-8").trim();
@@ -47,8 +47,8 @@ export function extractAgentsAppend(): string | undefined {
 export function sanitizeAgentsContent(content: string): string {
 	let sanitized = content;
 	sanitized = sanitized.replace(/~\/\.omp\b/gi, "~/.claude");
-	sanitized = sanitized.replace(/(^|[\s'"`])\.omp\//g, "$1.claude/");
-	sanitized = sanitized.replace(/\b\.omp\b/gi, ".claude");
-	sanitized = sanitized.replace(/\bomp\b/gi, "environment");
+	sanitized = sanitized.replace(/(^|[\s'"`(])\.omp\//gi, "$1.claude/");
+	sanitized = sanitized.replace(/(^|[\s'"`(])\.omp\b/gi, "$1.claude");
+	sanitized = sanitized.replace(/(?<!\.)\bomp\b/gi, "environment");
 	return sanitized;
 }

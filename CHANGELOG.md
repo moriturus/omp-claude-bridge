@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Development dependencies target Oh My Pi 19.0.1; typecheck, tests, and extension
+  loading (`omp models -e`) pass on 19.0.1.
+- Dependencies updated to the newest releases at least one day old (pnpm's default
+  `minimumReleaseAge`, now also set for bun in `bunfig.toml` so both lockfiles
+  resolve the same versions): `@anthropic-ai/claude-agent-sdk` 0.3.329,
+  `@anthropic-ai/sdk` 1.11.0, `@modelcontextprotocol/sdk` 1.32.2, `cc-session-io`
+  0.4.1, `typebox` 1.4.7, `zod` 4.6.7, `tsx` 4.23.15, `typescript` 7.0.2, and
+  `@types/node` 26.6.6. Excluded as under one day old at update time:
+  `@anthropic-ai/claude-agent-sdk` 0.3.330 and `@anthropic-ai/sdk` 1.12.0.
+
+### Fixed
+- The `max` thinking level sent no effort to Claude Code, and
+  `xhigh` was sent as `max`. Both now map to the matching Claude Code effort, and
+  AskClaude accepts `thinking: "max"`.
+- Parallel tool calls lost every result after the first when a session was rebuilt;
+  `repairToolPairing` replaced them with synthetic `[no tool result recorded]` errors.
+  Consecutive tool results are now persisted in one user message.
+- Reentrant (subagent) queries could delete the parent's session JSONL, overwrite the
+  shared session, or move the parent's cursor. Children now sync to an isolated session
+  that is deleted when they finish.
+- A late tool result from an aborted query wiped the output of a streaming parent and
+  could overwrite the shared cursor; unowned results now end with an isolated empty turn.
+- SDK error results (`is_error`, `error_*` subtypes) were reported as empty successful
+  turns in the provider, AskClaude, and compaction summaries.
+- Aborting during a deferred steer/follow-up replay did not stop the running query.
+- AskClaude ignored `allowFullMode: false` for `defaultMode: "full"` and explicit
+  `mode: "full"`, never streamed progress (`includePartialMessages` missing), and resumed
+  stale sessions marked for rebuild.
+- A typo in `askClaude.defaultMode` (or a non-boolean `allowFullMode`) ran AskClaude
+  with no blocked tools under `bypassPermissions`. Unknown values now fall back to
+  `read` with a warning, and an unknown mode is rejected before the query starts.
+- `usage.cost.total` was always `0`.
+- Thinking signatures from `anthropic-messages` models and images in tool results were
+  dropped during session rebuild.
+- Tool schemas with empty or non-string enums, or nested object properties, converted
+  to invalid or lossy Zod schemas.
+- AGENTS.md was read from `process.cwd()` instead of the session cwd, and `.omp`
+  rewriting missed standalone `.omp` while corrupting names such as `file.omp`.
+- Diagnostic logging could crash a turn when `~/.omp/agent` did not exist.
+
 ## [0.9.0]
 
 ### Fixed
@@ -12,19 +55,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   moved to `@oh-my-pi/pi-tui/chrome/keybinding-hints`; the old
   `@oh-my-pi/pi-coding-agent/modes/components/keybinding-hints` subpath is no longer in
   the host-package map, and Bun reports a missing subpath as a missing package.
+- First turn failing with `Claude Code returned an error result: No conversation found
+  with session ID` when OMP injected a hidden notice (e.g. the `xd://` device inventory
+  notice after an MCP tool change) before the first user prompt. Messages with roles
+  other than `user` / `assistant` / `toolResult` were dropped during session rebuild,
+  so no session file was written but its id was still resumed. Such messages are now
+  forwarded as user turns, and a rebuild that yields no records starts a fresh session
+  instead of resuming a missing one.
 
 ### Added
 - Latest Claude Code models: `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`,
-  `claude-haiku-5-5`, and `claude-fable-5-1`, each registered per context window it
-  serves. `opus` / `sonnet` / `haiku` / `fable` short names now resolve to the newest
+  `claude-haiku-5-5`, and `claude-fable-5-1`, each registered as one canonical catalog
+  entry. `opus` / `sonnet` / `haiku` / `fable` short names now resolve to the newest
   model in each family.
 
 ### Changed
 - `@oh-my-pi/pi-tui` dev dependency raised to `^18.13.3`, the first line that
   ships `chrome/keybinding-hints`, so `tsc --noEmit` resolves the new subpath.
 - `claude-opus-5-5` needs a Claude Code ≥2.1.280 binary and `claude-fable-5-1` ≥2.1.251.
-  The CLI bundled with `@anthropic-ai/claude-agent-sdk@0.2.141` is 2.1.141, so set
-  `provider.pathToClaudeCodeExecutable` to a newer `claude` binary for those ids.
+  If the CLI bundled with your `@anthropic-ai/claude-agent-sdk` install is older (see
+  `claudeCodeVersion` in its `package.json`), set `provider.pathToClaudeCodeExecutable`
+  to a newer `claude` binary for those ids.
 
 ## [0.8.1] - 2026-07-07
 

@@ -1,0 +1,4 @@
+[install]
+# Same supply-chain delay as pnpm's default (minimumReleaseAge = 1440 minutes),
+# so bun.lock and pnpm-lock.yaml resolve the same versions.
+minimumReleaseAge = 86400

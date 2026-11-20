@@ -4,10 +4,12 @@
 // console.error, empty object returned) so the extension always starts.
 
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
-import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils";
+import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils/dirs";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+
+export type AskClaudeMode = "full" | "read" | "none";
 
 export interface Config {
 	askClaude?: {
@@ -15,7 +17,7 @@ export interface Config {
 		name?: string;
 		label?: string;
 		description?: string;
-		defaultMode?: "full" | "read" | "none";
+		defaultMode?: AskClaudeMode;
 		defaultIsolated?: boolean;
 		allowFullMode?: boolean;
 		appendSkills?: boolean;
@@ -32,7 +34,8 @@ export interface Config {
 export function tryParseJson(path: string): Partial<Config> {
 	if (!existsSync(path)) return {};
 	try {
-		return JSON.parse(readFileSync(path, "utf-8"));
+		const parsed = JSON.parse(readFileSync(path, "utf-8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
 	} catch (e) {
 		console.error(`claude-bridge: failed to parse ${path}: ${e}`);
 		return {};
@@ -46,4 +49,16 @@ export function loadConfig(cwd: string): Config {
 		askClaude: { ...global.askClaude, ...project.askClaude },
 		provider: { ...global.provider, ...project.provider },
 	};
+}
+
+// Fail closed: config is hand-written JSON, so a typo in `defaultMode` or a non-boolean
+// `allowFullMode` must never widen Claude Code's permissions.
+export function resolveAskClaudeModes(askClaude: Config["askClaude"]): { allowFull: boolean; defaultMode: AskClaudeMode } {
+	const allowFull = askClaude?.allowFullMode === undefined || askClaude.allowFullMode === true;
+	const requested: unknown = askClaude?.defaultMode;
+	if (requested === "none" || (requested === "full" && allowFull)) return { allowFull, defaultMode: requested };
+	if (requested !== undefined && requested !== "read") {
+		console.error(`claude-bridge: askClaude.defaultMode ${JSON.stringify(requested)} is not allowed; using "read"`);
+	}
+	return { allowFull, defaultMode: "read" };
 }

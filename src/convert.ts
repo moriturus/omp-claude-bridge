@@ -44,6 +44,21 @@ export function messageContentToText(
 	return hasText ? parts.join("\n") : "";
 }
 
+type PiUserContent = string | Array<{ type: string; text?: string; data?: string; mimeType?: string }> | undefined;
+
+function convertUserContent(content: PiUserContent): SessionMessage["content"] | null {
+	if (typeof content === "string") return content || null;
+	if (!Array.isArray(content)) return null;
+	const parts = [];
+	for (const block of content) {
+		if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
+		else if (block.type === "image" && block.data && block.mimeType) {
+			parts.push({ type: "image", source: { type: "base64", media_type: block.mimeType, data: block.data } });
+		}
+	}
+	return parts.length ? parts : null;
+}
+
 /** Convert OMP message array to Anthropic API format. */
 export function convertPiMessages(
 	messages: PiMessage[],
@@ -54,20 +69,8 @@ export function convertPiMessages(
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
-			if (typeof msg.content === "string") {
-				anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
-			} else if (Array.isArray(msg.content)) {
-				const parts = [];
-				for (const block of msg.content) {
-					if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
-					else if (block.type === "image" && block.data && block.mimeType) {
-						parts.push({ type: "image", source: { type: "base64", media_type: block.mimeType, data: block.data } });
-					}
-				}
-				anthropicMessages.push({ role: "user", content: parts.length ? parts : "[image]" });
-			} else {
-				anthropicMessages.push({ role: "user", content: "[empty]" });
-			}
+			const content = convertUserContent(msg.content);
+			anthropicMessages.push({ role: "user", content: content ?? (Array.isArray(msg.content) ? "[image]" : "[empty]") });
 		} else if (msg.role === "assistant") {
 			const content = Array.isArray(msg.content) ? msg.content : [];
 			const blocks = [];
@@ -76,7 +79,7 @@ export function convertPiMessages(
 					blocks.push({ type: "text", text: block.text });
 				} else if (block.type === "thinking") {
 					const sig = block.thinkingSignature;
-					const isAnthropicProvider = msg.provider === PROVIDER_ID || msg.api === "anthropic";
+					const isAnthropicProvider = msg.provider === PROVIDER_ID || msg.api === "anthropic" || msg.api === "anthropic-messages";
 					if (isAnthropicProvider && sig) {
 						blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
 					}
@@ -88,11 +91,41 @@ export function convertPiMessages(
 			if (!blocks.length) blocks.push({ type: "text", text: "[incompatible content omitted]" });
 			anthropicMessages.push({ role: "assistant", content: blocks });
 		} else if (msg.role === "toolResult") {
-			const text = typeof msg.content === "string" ? msg.content : messageContentToText(msg.content);
-			anthropicMessages.push({
-				role: "user",
-				content: [{ type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content: text || "", is_error: msg.isError }],
-			});
+			let content: string | Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }>;
+			if (typeof msg.content === "string") {
+				content = msg.content;
+			} else if (Array.isArray(msg.content)) {
+				const hasImage = msg.content.some((b) => b.type === "image" && b.data && b.mimeType);
+				if (hasImage) {
+					const parts = [];
+					for (const b of msg.content) {
+						if (b.type === "text" && b.text) parts.push({ type: "text" as const, text: b.text });
+						else if (b.type === "image" && b.data && b.mimeType) {
+							parts.push({ type: "image" as const, source: { type: "base64" as const, media_type: b.mimeType, data: b.data } });
+						}
+					}
+					content = parts.length ? parts : "";
+				} else {
+					content = messageContentToText(msg.content) || "";
+				}
+			} else {
+				content = "";
+			}
+			const toolResult = { type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content, is_error: msg.isError };
+			// Parallel tool calls produce one pi toolResult message per call; Anthropic expects all
+			// results for one assistant turn in a single user message, and repairToolPairing would
+			// otherwise replace every result after the first with a synthetic error.
+			const previous = anthropicMessages[anthropicMessages.length - 1];
+			const previousIsToolResults = previous?.role === "user" && Array.isArray(previous.content)
+				&& previous.content.length > 0 && previous.content.every((b) => b.type === "tool_result");
+			if (previousIsToolResults) previous.content.push(toolResult);
+			else anthropicMessages.push({ role: "user", content: [toolResult] });
+		} else {
+			// OMP injects context as other roles (e.g. "developer" for hidden custom
+			// messages such as system notices). The Anthropic message format has no
+			// such role, so forward any content as a user turn instead of dropping it.
+			const content = convertUserContent((msg as { content?: PiUserContent }).content);
+			if (content) anthropicMessages.push({ role: "user", content });
 		}
 	}
 

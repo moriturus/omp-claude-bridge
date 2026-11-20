@@ -51,6 +51,9 @@ test("resolveModel supports exact and ordered partial lookup", () => {
 	const models = buildModels(catalog);
 
 	assert.equal(resolveModel(models, MODEL_IDS_IN_ORDER[5])?.id, MODEL_IDS_IN_ORDER[5]);
-	assert.equal(resolveModel(models, "OPUS")?.id, MODEL_IDS_IN_ORDER[1]);
+	assert.equal(resolveModel(models, "OPUS")?.id, "claude-opus-5-5");
+	assert.equal(resolveModel(models, "sonnet")?.id, "claude-sonnet-5-5");
+	assert.equal(resolveModel(models, "haiku")?.id, "claude-haiku-5-5");
+	assert.equal(resolveModel(models, "fable")?.id, "claude-fable-5-1");
 	assert.equal(resolveModel(models, "does-not-exist"), undefined);
 });
