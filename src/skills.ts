@@ -7,12 +7,12 @@ export const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
 // Extract skills block from OMP's system prompt for forwarding to Claude Code.
 export function extractSkillsBlock(systemPrompt?: string): string | undefined {
 	if (!systemPrompt) return undefined;
-	const startMarker = "The following skills provide specialized instructions for specific tasks.";
-	const endMarker = "</available_skills>";
+	const startMarker = "Matching skill → MUST read skill://<name> first.";
 	const start = systemPrompt.indexOf(startMarker);
-	if (start === -1) return undefined;
+	if (start < 0) return undefined;
+	const endMarker = "</skills>";
 	const end = systemPrompt.indexOf(endMarker, start);
-	if (end === -1) return undefined;
+	if (end < 0) return undefined;
 	return rewriteSkillsBlock(systemPrompt.slice(start, end + endMarker.length).trim());
 }
 

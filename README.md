@@ -10,7 +10,7 @@
 <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 <img alt="Oh My Pi extension" src="https://img.shields.io/badge/Oh%20My%20Pi-extension-6E56CF">
 <img alt="Claude Agent SDK" src="https://img.shields.io/badge/Claude%20Code-Agent%20SDK-D97757">
-<img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
+<img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white">
 <a href="https://github.com/DevVig/omp-claude-bridge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DevVig/omp-claude-bridge/actions/workflows/ci.yml/badge.svg"></a>
 <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg">
 </p>
@@ -19,9 +19,11 @@
 
 ---
 
-`omp-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code.
+`omp-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with bridged tools running through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code.
 
 Authentication is delegated unchanged to the official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk). The bridge provides no login flow and does not read, store, validate, log, or inject Claude credentials.
+
+**Version 0.10.0 requires Oh My Pi 19.0.1 or newer.** See the [0.10.0 changelog](CHANGELOG.md#0100) for upgrade notes and behavior changes.
 
 <div align="center">
 <a href="assets/claude-bridge1.png"><img src="assets/claude-bridge1.png" width="49%"></a>&nbsp;
@@ -136,10 +138,12 @@ You can also bake it into a skill or AGENTS.md, e.g. *"Always call AskClaude to 
 | Parameter | Values | Description |
 | --------- | ------ | ----------- |
 | `prompt` | string | The question or task for Claude Code. |
-| `mode` | `read` (default), `none`, `full` | `read` = read files + web; `full` = read/write/bash. Lock `full` out with `allowFullMode: false`. |
+| `mode` | `read` (default), `none`, `full` | `read` = filesystem reads/searches and web search/fetch; `none` = no tools; `full` = read/write/bash. Lock `full` out with `allowFullMode: false`. |
 | `model` | `opus` (default), `sonnet`, `haiku`, or a full id | Which Claude model handles the delegation. |
-| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` | Effort level. |
+| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Effort level, or `off` to disable thinking. |
 | `isolated` | boolean (default `false`) | When `true`, Claude gets a clean session with no conversation history. |
+
+`read` exposes `Read`, `Glob`, `Grep`, `WebFetch`, and `WebSearch`. `none` exposes no tools. Both modes skip Claude Code user and project settings and treat the prompt literally, without file-mention or slash-command expansion. `full` can use write and shell tools as permitted by Claude Code settings; the bridge does not bypass those permissions.
 
 ## Configuration reference
 
@@ -166,9 +170,9 @@ Config is read from `~/.omp/agent/claude-bridge.json` (global) and the project O
 | `name` | `"AskClaude"` | Override the tool's OMP-side name. |
 | `label` | `"Ask Claude Code"` | Override the TUI label. |
 | `description` | — | Override the tool description shown to the model. |
-| `defaultMode` | `"read"` | `"read"`, `"none"`, or `"full"`. |
+| `defaultMode` | `"read"` | `"read"`, `"none"`, or `"full"`. Only the global user config can select `"full"` as the default. |
 | `defaultIsolated` | `false` | Start each call in a fresh session. |
-| `allowFullMode` | `true` | Allow `mode: "full"`; set `false` to lock it out. |
+| `allowFullMode` | `true` | Allow `mode: "full"`. A project cannot unlock a user-level `false`. |
 | `appendSkills` | `true` | Forward OMP's skills block into the system prompt. |
 
 **`provider`**
@@ -178,11 +182,13 @@ Config is read from `~/.omp/agent/claude-bridge.json` (global) and the project O
 | `appendSystemPrompt` | `true` | Append OMP's AGENTS.md and skills. |
 | `settingSources` | — | Claude Code filesystem settings to load; only applied when `appendSystemPrompt: false`. |
 | `strictMcpConfig` | `true` | Ignore filesystem MCP configuration outside the bridge's OMP tool server; Claude.ai cloud MCP auto-discovery is also disabled. |
-| `pathToClaudeCodeExecutable` | — | Path to the `claude` binary, if the bundled one can't run on your OS/filesystem — also required for model ids newer than the bundled CLI supports (e.g. `claude-opus-5-5` needs Claude Code ≥2.1.280, `claude-fable-5-1` ≥2.1.251). |
+| `pathToClaudeCodeExecutable` | — | Absolute path to Claude Code **2.1.329 or newer**. The bundled CLI is used by default. Only the global user config can override it. |
+
+With `provider.strictMcpConfig: false`, external MCP tools run inside Claude Code, not in OMP. Configure their permissions in Claude Code. By default only the OMP tool server is available, and Claude.ai cloud MCP auto-discovery is disabled.
 
 ## How it works
 
-OMP's built-in tools are bridged to Claude Code and back, so from your side it behaves like any other OMP provider. On every extension initialization, the bridge registers the canonical OMP Anthropic catalog entries while retaining the parent session's process-global stream function. Agent SDK queries receive the selected canonical model ID and resolve authentication entirely inside Claude Code.
+The bridge registers the canonical OMP Anthropic catalog entries. Each OMP session owns its Claude transport and transcript independently. `/fresh` gives the current history a new Claude session, while `/clear` starts without the old history. AskClaude uses a temporary copy of the current OMP history unless `isolated` is set. The Agent SDK resolves authentication.
 
 ## Debugging
 
@@ -198,11 +204,13 @@ When filing a session-resume bug (e.g. "No conversation found"), the `syncResult
 ```bash
 git clone https://github.com/DevVig/omp-claude-bridge.git
 cd omp-claude-bridge
-bun install
+mise exec -- bun install --frozen-lockfile
 
-bun run typecheck   # tsc --noEmit
-bun run test        # node --test unit suite
+mise exec -- bun run typecheck
+mise exec -- bun run test
 ```
+
+The full suite includes a Bun test; npm is not a substitute. Use `mise exec -- bun …` without activation, or run `mise install` and activate mise for your shell.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow. CI runs typecheck and tests on every push and PR.
 

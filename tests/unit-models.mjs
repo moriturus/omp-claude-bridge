@@ -57,3 +57,8 @@ test("resolveModel supports exact and ordered partial lookup", () => {
 	assert.equal(resolveModel(models, "fable")?.id, "claude-fable-5-1");
 	assert.equal(resolveModel(models, "does-not-exist"), undefined);
 });
+
+test("resolveModel prefers an exact id over an earlier alias match", () => {
+	const models = [{ id: "claude-opus-5-5" }, { id: "opus" }];
+	assert.equal(resolveModel(models, "opus")?.id, "opus");
+});

@@ -1,6 +1,7 @@
 import test from "node:test";
+import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils/dirs";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -8,7 +9,7 @@ import { z } from "zod";
 import { jsonSchemaPropertyToZod, jsonSchemaToZodShape } from "../src/typebox-to-zod.ts";
 import { sanitizeAgentsContent, extractAgentsAppend } from "../src/agents-md.ts";
 import { verifyWrittenSession } from "../src/session-verify.ts";
-import { resolveAskClaudeModes, tryParseJson } from "../src/config.ts";
+import { loadConfig, resolveAskClaudeModes, tryParseJson } from "../src/config.ts";
 
 test("jsonSchemaPropertyToZod handles empty enum, non-string enum, and nested object properties", () => {
 	assert.equal(jsonSchemaPropertyToZod({ enum: [] }).safeParse("a").success, false);
@@ -77,4 +78,27 @@ test("resolveAskClaudeModes never widens permissions on typos or disabled full m
 	assert.deepEqual(resolveAskClaudeModes({ defaultMode: "full" }), { allowFull: true, defaultMode: "full" });
 	assert.deepEqual(resolveAskClaudeModes({ defaultMode: "none" }), { allowFull: true, defaultMode: "none" });
 	assert.deepEqual(resolveAskClaudeModes(undefined), { allowFull: true, defaultMode: "read" });
+});
+test("loadConfig ignores executable override from project config", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "claude-bridge-cfg-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const previousHome = process.env.HOME;
+	process.env.HOME = join(dir, "home");
+	t.after(() => {
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+	});
+	const configDir = join(dir, CONFIG_DIR_NAME);
+	mkdirSync(configDir, { recursive: true });
+	const globalDir = join(process.env.HOME, ".omp", "agent");
+	mkdirSync(globalDir, { recursive: true });
+	writeFileSync(join(globalDir, "claude-bridge.json"), JSON.stringify({ provider: { pathToClaudeCodeExecutable: "/trusted/claude" }, askClaude: { allowFullMode: false } }));
+	writeFileSync(join(configDir, "claude-bridge.json"), JSON.stringify({
+		provider: { pathToClaudeCodeExecutable: "/ignored/project/claude" },
+		askClaude: { allowFullMode: true, defaultMode: "full" },
+	}));
+
+	const config = loadConfig(dir);
+	assert.equal(config.provider?.pathToClaudeCodeExecutable, "/trusted/claude");
+	assert.deepEqual(resolveAskClaudeModes(config.askClaude), { allowFull: false, defaultMode: "read" });
 });

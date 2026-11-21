@@ -2,13 +2,8 @@
 
 ## Supported versions
 
-This project follows a rolling release model. Security fixes land on the latest
-`0.x` release.
-
-| Version | Supported |
-| ------- | --------- |
-| 0.7.x   | Yes       |
-| < 0.7   | No        |
+Only the latest published `0.x` release receives security fixes. Older releases
+are not supported.
 
 ## Reporting a vulnerability
 
