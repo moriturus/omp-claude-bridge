@@ -1,5 +1,7 @@
 import { createAssistantMessageEventStream as newAssistantMessageEventStream, StringEnum, Type, getModels, type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions, type Tool, type Usage } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-ai-shim";
 import { type ExtensionAPI, type ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
+import { SettingsManager } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim";
+import { cfgSecretsEnabled } from "@oh-my-pi/pi-coding-agent/secrets/settings";
 import { keyHint } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import { buildSessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
 import type { CompactionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
@@ -107,7 +109,8 @@ const SDK_TO_PI_TOOL_NAME: Record<string, string> = {
 };
 
 // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
-const MODELS = buildModels(getModels("anthropic"));
+const ANTHROPIC_MODELS = getModels("anthropic");
+const MODELS = buildModels(ANTHROPIC_MODELS);
 
 function resolveModel(input: string) {
 	return _resolveModel(MODELS, input);
@@ -402,6 +405,7 @@ class BridgeSession {
 	transcript?: SessionState;
 	current?: QueryContext;
 	ui?: ExtensionUIContext;
+	protectSecrets?: boolean;
 
 	close(): void {
 		this.current?.abort();
@@ -692,8 +696,15 @@ async function consumeQuery(
 	let sessionId: string | undefined;
 	let resultError: string | undefined;
 	let sawResult = false;
-	const outputAtStart = run.turnOutput;
-	const blocksAtStart = outputAtStart?.content.length ?? 0;
+	let assistantMessageId: string | undefined;
+	let outputAtMessageStart = run.turnOutput;
+	let blocksAtMessageStart = outputAtMessageStart?.content.length ?? 0;
+	const markAssistantMessage = (id: string) => {
+		if (assistantMessageId === id) return;
+		assistantMessageId = id;
+		outputAtMessageStart = run.turnOutput;
+		blocksAtMessageStart = run.turnBlocks.length;
+	};
 	try {
 		for await (const message of sdkQuery) {
 			if (message.type === "system" && message.subtype === "init") {
@@ -709,14 +720,16 @@ async function consumeQuery(
 				if (message.subtype !== "success" || message.is_error) {
 					resultError = resultErrorText(message);
 				} else {
-					const from = run.turnOutput === outputAtStart ? blocksAtStart : 0;
+					const from = run.turnOutput === outputAtMessageStart ? blocksAtMessageStart : 0;
 					if (!run.turnBlocks.some((block, index) => index >= from && block.type === "text" && block.text)) {
 						appendText(run, message.result);
 					}
 				}
 			} else if (message.type === "stream_event" && message.parent_tool_use_id == null) {
+				if (message.event.type === "message_start") markAssistantMessage(message.event.message.id);
 				processStreamEvent(message.event, toolNames, model, run);
 			} else if (message.type === "assistant" && message.parent_tool_use_id == null) {
+				markAssistantMessage(message.message.id);
 				processAssistantMessage(message, toolNames, run);
 			}
 		}
@@ -730,16 +743,10 @@ async function consumeQuery(
 
 function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
 	const stream = newAssistantMessageEventStream();
-	if (options?.signal?.aborted) {
-		stream.push({ type: "error", reason: "aborted", error: newAssistantOutput(model, "", "aborted", "Operation aborted") });
-		stream.end();
-		return stream;
-	}
 
 	const states = options?.providerSessionState;
 	const current = states?.get(PROVIDER_ID);
 	const owner: BridgeSession = current instanceof BridgeSession ? current : new BridgeSession();
-	if (owner !== current) states?.set(PROVIDER_ID, owner);
 	const run = owner.current;
 	if (run?.turnToolCallIds.size && !run.currentPiStream) {
 		const { results, stopIdx } = _extractAllToolResults(context.messages);
@@ -768,6 +775,13 @@ function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleSt
 			return stream;
 		}
 	}
+
+	if (options?.signal?.aborted) {
+		stream.push({ type: "error", reason: "aborted", error: newAssistantOutput(model, "", "aborted", "Operation aborted") });
+		stream.end();
+		return stream;
+	}
+	if (owner !== current) states?.set(PROVIDER_ID, owner);
 
 	// A side request without matching tool results must not replace a live query.
 	const target = run ? new BridgeSession() : owner;
@@ -817,6 +831,7 @@ async function runProvider(
 		const cwd = options?.cwd ?? process.cwd();
 		const config = loadConfig(cwd);
 		const settings = config.provider;
+		const protectSecrets = session.protectSecrets ?? cfgSecretsEnabled.get(SettingsManager.create(cwd));
 		const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(
 			bridgeTools && options?.toolChoice !== "none" ? context : { ...context, tools: undefined },
 			config.askClaude?.name ?? "AskClaude",
@@ -832,7 +847,7 @@ async function runProvider(
 			priorCount = context.messages.length;
 			prompt = "Continue from the conversation above.";
 		}
-		let sessionId = prepareSession(session.transcript, context.messages.slice(0, priorCount), cwd, {
+		let sessionId = prepareSession(protectSecrets ? undefined : session.transcript, context.messages.slice(0, priorCount), cwd, {
 			customToolNameToSdk,
 			modelId: model.id,
 			hooks: {
@@ -842,7 +857,8 @@ async function runProvider(
 		});
 
 		const append = settings?.appendSystemPrompt === false ? undefined : [
-			extractAgentsAppend(cwd), extractSkillsBlock(systemPromptText(context.systemPrompt)),
+			protectSecrets ? undefined : extractAgentsAppend(cwd),
+			extractSkillsBlock(systemPromptText(context.systemPrompt)),
 		].filter(Boolean).join("\n\n") || undefined;
 		const reasoningOff = options?.disableReasoning === true || options?.forceReasoningOff === true;
 		const effort = !reasoningOff && options?.reasoning
@@ -856,7 +872,7 @@ async function runProvider(
 			includePartialMessages: true,
 			verbatimPrompts: true,
 			strictMcpConfig: settings?.strictMcpConfig !== false || options?.toolChoice === "none",
-			settingSources: settings?.appendSystemPrompt === false ? settings.settingSources ?? ["user", "project"] : undefined,
+			settingSources: protectSecrets ? [] : settings?.appendSystemPrompt === false ? settings.settingSources ?? ["user", "project"] : undefined,
 			pathToClaudeCodeExecutable: settings?.pathToClaudeCodeExecutable,
 			systemPrompt: { type: "preset", preset: "claude_code", append, snapshot: false },
 			...(reasoningOff ? { thinking: { type: "disabled" } } : {}),
@@ -893,7 +909,7 @@ async function runProvider(
 		}
 
 		const history = run.latestMessages;
-		session.transcript = sessionId && run.currentPiStream
+		session.transcript = !protectSecrets && sessionId && run.currentPiStream
 			? { sessionId, cursor: history.length, cwd, head: messageAnchor(history[0]), tail: messageAnchor(history.at(-1)) }
 			: undefined;
 		release();
@@ -1025,6 +1041,7 @@ export default function (pi: ExtensionAPI) {
 		const owner = payloadSessions.get(payload);
 		if (!owner) return;
 		owner.ui = ctx.ui;
+		owner.protectSecrets = cfgSecretsEnabled.get(SettingsManager.create(ctx.cwd));
 		session = owner;
 	});
 	// OMP owns transport disposal on clear/fresh, switch and shutdown. Tree
@@ -1034,6 +1051,8 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_before_compact", async (event, ctx) => {
 		if (ctx.model?.baseUrl !== "claude-bridge") return undefined;
+		// The native path applies the session's secret obfuscator before sending the summary request.
+		if (cfgSecretsEnabled.get(SettingsManager.create(ctx.cwd))) return undefined;
 		debug(
 			`session_before_compact: takeover isSplitTurn=${event.preparation.isSplitTurn} ` +
 			`messages=${event.preparation.messagesToSummarize.length} turnPrefix=${event.preparation.turnPrefixMessages.length}`,
@@ -1181,9 +1200,17 @@ export default function (pi: ExtensionAPI) {
 					};
 				}
 
+				if (cfgSecretsEnabled.get(SettingsManager.create(ctx.cwd))) {
+					return {
+						content: [{ type: "text" as const, text: "Error: AskClaude is unavailable while OMP secret protection is enabled." }],
+						isError: true,
+						details: { error: true },
+					};
+				}
+
 				const askParams = readAskClaudeParams(params, true);
 				const mode = askParams.mode ?? defaultMode;
-				if (!allowFull && mode === "full") {
+				if (mode === "full" && (!allowFull || !resolveAskClaudeModes(loadConfig(ctx.cwd).askClaude).allowFull)) {
 					return {
 						content: [{ type: "text" as const, text: "Error: AskClaude full mode is disabled by configuration (allowFullMode: false)." }],
 						isError: true,
@@ -1211,7 +1238,10 @@ export default function (pi: ExtensionAPI) {
 						appendSkills: askConf?.appendSkills,
 						model: askParams.model,
 						thinking: askParams.thinking,
-						context: isolated ? undefined : defaultConvertToLlm(buildSessionContext(ctx.sessionManager.getBranch()).messages),
+						context: isolated ? undefined : defaultConvertToLlm(
+							// A Claude delegate cannot read provider-bound OpenAI compactions.
+							buildSessionContext(ctx.sessionManager.getBranch(), undefined, undefined, { model: ANTHROPIC_MODELS[0] }).messages,
+						),
 					});
 					clearInterval(progressInterval);
 					onUpdate?.({ content: [{ type: "text", text: "" }], details: {} });

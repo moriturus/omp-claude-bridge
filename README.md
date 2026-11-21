@@ -23,7 +23,7 @@
 
 Authentication is delegated unchanged to the official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk). The bridge provides no login flow and does not read, store, validate, log, or inject Claude credentials.
 
-**Version 0.10.0 requires Oh My Pi 19.0.1 or newer.** See the [0.10.0 changelog](CHANGELOG.md#0100) for upgrade notes and behavior changes.
+**Version 0.11.0 requires Oh My Pi 19.0.1 or newer.** See the [0.11.0 changelog](CHANGELOG.md#0110) for upgrade notes and behavior changes.
 
 <div align="center">
 <a href="assets/claude-bridge1.png"><img src="assets/claude-bridge1.png" width="49%"></a>&nbsp;
@@ -144,6 +144,8 @@ You can also bake it into a skill or AGENTS.md, e.g. *"Always call AskClaude to 
 | `isolated` | boolean (default `false`) | When `true`, Claude gets a clean session with no conversation history. |
 
 `read` exposes `Read`, `Glob`, `Grep`, `WebFetch`, and `WebSearch`. `none` exposes no tools. Both modes skip Claude Code user and project settings and treat the prompt literally, without file-mention or slash-command expansion. `full` can use write and shell tools as permitted by Claude Code settings; the bridge does not bypass those permissions.
+
+When OMP's secret protection (`secrets.enabled`) is on, AskClaude is unavailable because its separate SDK request cannot use the session's secret obfuscator. The bridge uses OMP's standard compaction path, skips raw `AGENTS.md` and Claude Code filesystem settings, and rebuilds history from OMP at each new turn rather than resuming a potentially stale Claude transcript.
 
 ## Configuration reference
 

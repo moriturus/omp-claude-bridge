@@ -6,9 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0]
+
 ### Fixed
-- Honor cancellation on the active OMP request when Claude continues after tool results.
-- Preserve the final answer when Claude streams thinking but returns the text only in the SDK result.
+- Honor cancellation on the active OMP request when Claude continues after tool results, including requests already cancelled at dispatch.
+- Preserve the answer when the final Claude message streams only thinking and the text arrives in the SDK result, even if earlier text was streamed before a tool call.
+- Keep AskClaude from using full mode in a worktree that forbids it, and retain Claude-readable history after an OpenAI-native compaction.
+- Respect OMP secret protection: use standard compaction, rebuild protected history, skip raw filesystem instructions and settings, and block direct AskClaude requests that cannot use the session's obfuscator.
 
 ## [0.10.0]
 
