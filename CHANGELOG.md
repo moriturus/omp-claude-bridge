@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Honor cancellation on the active OMP request when Claude continues after tool results.
+- Preserve the final answer when Claude streams thinking but returns the text only in the SDK result.
+
 ## [0.10.0]
 
 ### Changed

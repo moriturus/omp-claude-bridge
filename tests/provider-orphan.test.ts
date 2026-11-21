@@ -124,6 +124,50 @@ async function* answer(request: QueryRequest) {
 	yield { type: "result", subtype: "success", is_error: false, result: request.options.resume ? "resumed" : "answered" };
 }
 
+test("the active tool continuation observes its own cancellation signal", async () => {
+	const waiting = gate();
+	const initial = new AbortController();
+	const continuation = new AbortController();
+	const options = useProvider("cancel-continuation");
+	const first = user("read a file");
+	const tools = [{ name: "read", description: "Read", parameters: { type: "object", properties: {} } }] as Context["tools"];
+	queryPlan = async function* () {
+		yield { type: "assistant", message: { id: "tool", content: [
+			{ type: "tool_use", id: "call", name: "mcp__custom-tools__read", input: {} },
+		] } };
+		await waiting.promise;
+		yield { type: "result", subtype: "success", is_error: false, result: "finished" };
+	};
+	try {
+		const call = await __test.streamClaudeAgentSdk(model, { messages: [first], tools }, { ...options, signal: initial.signal }).result();
+		expect(call.stopReason).toBe("toolUse");
+		const result = __test.streamClaudeAgentSdk(model, { tools, messages: [first, call, {
+			role: "toolResult", toolCallId: "call", toolName: "read", content: [{ type: "text", text: "file" }], isError: false, timestamp: 2,
+		}] }, { ...options, signal: continuation.signal }).result();
+		continuation.abort();
+		waiting.open();
+		expect((await result).stopReason).toBe("aborted");
+	} finally {
+		waiting.open();
+		queryPlan = undefined;
+	}
+});
+
+test("the SDK result supplies answer text when only thinking was streamed", async () => {
+	queryPlan = async function* () {
+		yield { type: "assistant", message: { id: "thinking", content: [
+			{ type: "thinking", thinking: "reasoning", signature: "sig" },
+		] } };
+		yield { type: "result", subtype: "success", is_error: false, result: "visible answer" };
+	};
+	try {
+		const output = await __test.streamClaudeAgentSdk(model, { messages: [user("answer")] }, useProvider("result-text")).result();
+		expect(textOf(output)).toBe("visible answer");
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
 test("a replayed tool result makes a model call with its result in the imported history", async () => {
 	queryPlan = answer;
 	try {

@@ -708,8 +708,11 @@ async function consumeQuery(
 				logServedContextWindow("result", message, model);
 				if (message.subtype !== "success" || message.is_error) {
 					resultError = resultErrorText(message);
-				} else if (run.turnBlocks.length === (run.turnOutput === outputAtStart ? blocksAtStart : 0)) {
-					appendText(run, message.result);
+				} else {
+					const from = run.turnOutput === outputAtStart ? blocksAtStart : 0;
+					if (!run.turnBlocks.some((block, index) => index >= from && block.type === "text" && block.text)) {
+						appendText(run, message.result);
+					}
 				}
 			} else if (message.type === "stream_event" && message.parent_tool_use_id == null) {
 				processStreamEvent(message.event, toolNames, model, run);
@@ -743,6 +746,8 @@ function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleSt
 		const matching = results.filter((r) => r.toolCallId && run.turnToolCallIds.has(r.toolCallId));
 		if (matching.length) {
 			startTurn(run, model, stream);
+			run.setAbortSignal(options?.signal);
+			if (!run.currentPiStream) return stream;
 			run.latestMessages = context.messages;
 			for (let i = stopIdx + 1; i < context.messages.length; i++) {
 				const message = context.messages[i];
@@ -783,7 +788,6 @@ async function runProvider(
 ): Promise<void> {
 	let running: Query | undefined;
 	let aborted = false;
-	const signal = options?.signal;
 	const release = () => {
 		if (session.current === run) session.current = undefined;
 		for (const resolve of run.pendingToolCalls.values()) {
@@ -792,7 +796,7 @@ async function runProvider(
 		run.pendingToolCalls.clear();
 		run.pendingResults.clear();
 		run.approvedToolCalls.clear();
-		signal?.removeEventListener("abort", run.abort);
+		run.setAbortSignal();
 	};
 	run.abort = () => {
 		aborted = true;
@@ -801,7 +805,7 @@ async function runProvider(
 		release();
 		finishTurn(run, "aborted", "Operation aborted");
 	};
-	signal?.addEventListener("abort", run.abort, { once: true });
+	run.setAbortSignal(options?.signal);
 
 	try {
 		if (options?.onPayload) {

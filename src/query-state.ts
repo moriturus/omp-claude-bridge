@@ -13,6 +13,14 @@ export class QueryContext {
 	streamedMessageId?: string;
 	usageBase?: AssistantMessage["usage"];
 	abort: () => void = () => {};
+	private abortSignal?: AbortSignal;
+
+	setAbortSignal(signal?: AbortSignal): void {
+		this.abortSignal?.removeEventListener("abort", this.abort);
+		this.abortSignal = signal;
+		if (signal?.aborted) this.abort();
+		else signal?.addEventListener("abort", this.abort, { once: true });
+	}
 
 	constructor(public latestMessages: Context["messages"]) {}
 
