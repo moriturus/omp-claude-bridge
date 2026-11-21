@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build:
     name: Typecheck & test
-    runs-on: namespace-profile-vig
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
