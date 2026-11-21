@@ -3,11 +3,15 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
 import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { withActiveSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { SettingsManager } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim";
+import { cfgSecretsEnabled } from "@oh-my-pi/pi-coding-agent/secrets/settings";
 import type { AssistantMessage, Context, Model, ProviderSessionState } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-ai-shim";
 import { getSessionPath } from "cc-session-io";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 type Gate = { promise: Promise<void>; open: () => void };
 function gate(): Gate {
@@ -123,6 +127,112 @@ async function* answer(request: QueryRequest) {
 	yield { type: "system", subtype: "init", session_id: "test-session" };
 	yield { type: "result", subtype: "success", is_error: false, result: request.options.resume ? "resumed" : "answered" };
 }
+
+test.each([false, true])("tool continuation cancels before or after dispatch (already aborted: %s)", async (alreadyAborted) => {
+	const waiting = gate();
+	const initial = new AbortController();
+	const continuation = new AbortController();
+	const options = useProvider("cancel-continuation");
+	const first = user("read a file");
+	const tools = [{ name: "read", description: "Read", parameters: { type: "object", properties: {} } }] as Context["tools"];
+	queryPlan = async function* () {
+		yield { type: "assistant", message: { id: "tool", content: [
+			{ type: "tool_use", id: "call", name: "mcp__custom-tools__read", input: {} },
+		] } };
+		await waiting.promise;
+		yield { type: "result", subtype: "success", is_error: false, result: "finished" };
+	};
+	try {
+		const call = await __test.streamClaudeAgentSdk(model, { messages: [first], tools }, { ...options, signal: initial.signal }).result();
+		expect(call.stopReason).toBe("toolUse");
+		if (alreadyAborted) continuation.abort();
+		const result = __test.streamClaudeAgentSdk(model, { tools, messages: [first, call, {
+			role: "toolResult", toolCallId: "call", toolName: "read", content: [{ type: "text", text: "file" }], isError: false, timestamp: 2,
+		}] }, { ...options, signal: continuation.signal }).result();
+		if (!alreadyAborted) continuation.abort();
+		const outcome = await Promise.race([
+			result.then((output) => output.stopReason),
+			setImmediate("still waiting for SDK"),
+		]);
+		expect(outcome).toBe("aborted");
+
+		queryPlan = async function* ({ options }) {
+			const result = options.mcpServers?.["custom-tools"] ? "read available" : "read unavailable";
+			yield { type: "result", subtype: "success", is_error: false, result };
+		};
+		const next = await __test.streamClaudeAgentSdk(model, { messages: [user("try again")], tools }, options).result();
+		expect(textOf(next)).toBe("read available");
+	} finally {
+		waiting.open();
+		queryPlan = undefined;
+	}
+});
+
+test.each(["assistant", "stream_event"])("the SDK result supplies missing final answer text after an external tool (%s)", async (kind) => {
+	queryPlan = async function* () {
+		yield { type: "assistant", message: { id: "external", content: [
+			{ type: "text", text: "Looking up. " },
+			{ type: "tool_use", name: "mcp__remote__fetch", id: "lookup", input: {} },
+		] } };
+		const thinking = { type: "thinking", thinking: "reasoning", signature: "sig" };
+		if (kind === "stream_event") {
+			yield { type: "stream_event", event: { type: "message_start", message: { id: "final", usage: {} } } };
+			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: thinking } };
+			yield { type: "stream_event", event: { type: "content_block_stop", index: 0 } };
+		}
+		yield { type: "assistant", message: { id: "final", content: [thinking] } };
+		yield { type: "result", subtype: "success", is_error: false, result: "visible answer" };
+	};
+	try {
+		const output = await __test.streamClaudeAgentSdk(model, { messages: [user("answer")] }, useProvider("result-text")).result();
+		expect(textOf(output)).toBe("Looking up. visible answer");
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
+test("the provider does not send raw project instructions with secret protection active", async () => {
+	const cwd = join(claudeDir, "protected-project");
+	mkdirSync(cwd);
+	const marker = "RAW_PROJECT_SECRET_FIXTURE";
+	writeFileSync(join(cwd, "AGENTS.md"), `Synthetic instruction containing ${marker}`);
+	const settings = SettingsManager.inMemory();
+	cfgSecretsEnabled.set(settings, true);
+	queryPlan = async function* ({ options }) {
+		const prompt = options.systemPrompt;
+		const result = typeof prompt === "object" && prompt.append?.includes(marker) ? "raw instructions received" : "no raw instructions";
+		yield { type: "result", subtype: "success", is_error: false, result };
+	};
+	try {
+		const output = await withActiveSettings(settings, () =>
+			__test.streamClaudeAgentSdk(model, { messages: [user("answer")] }, { cwd }).result());
+		expect(textOf(output)).toBe("no raw instructions");
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
+test("secret protection rebuilds previously unprotected Claude history", async () => {
+	const options = useProvider("protected-resume");
+	const original = user("original secret fixture", 1);
+	queryPlan = answer;
+	try {
+		const previous = await __test.streamClaudeAgentSdk(model, { messages: [original] }, options).result();
+		const settings = SettingsManager.inMemory();
+		cfgSecretsEnabled.set(settings, true);
+		queryPlan = async function* (request) {
+			const id = request.options.resume;
+			const transcript = id && id !== "test-session" ? readFileSync(getSessionPath(id, options.cwd, claudeDir), "utf8") : "";
+			const result = transcript.includes("protected placeholder") && !transcript.includes("original secret fixture") ? "protected" : "stale history";
+			yield { type: "result", subtype: "success", is_error: false, result };
+		};
+		const messages = [{ ...original, content: "protected placeholder" }, previous, user("again", 2)];
+		const output = await withActiveSettings(settings, () => __test.streamClaudeAgentSdk(model, { messages }, options).result());
+		expect(textOf(output)).toBe("protected");
+	} finally {
+		queryPlan = undefined;
+	}
+});
 
 test("a replayed tool result makes a model call with its result in the imported history", async () => {
 	queryPlan = answer;
@@ -257,6 +367,45 @@ test("a skipped MCP call cannot shift another result; external tools and steerin
 	}
 }, 2000);
 
+test("AskClaude does not bypass active secret protection", async () => {
+	let tool: Parameters<ExtensionAPI["registerTool"]>[0];
+	activate({ on() {}, registerProvider() {}, registerTool(definition: typeof tool) { tool = definition; } } as unknown as ExtensionAPI);
+	const settings = SettingsManager.inMemory();
+	cfgSecretsEnabled.set(settings, true);
+	const ctx = { cwd: join(claudeDir, "protected-worktree"), getSystemPrompt: () => [] } as unknown as Parameters<typeof tool.execute>[4];
+	queryPlan = answer;
+	try {
+		const result = await withActiveSettings(settings, () => tool.execute(
+			"protected", { prompt: "delegate", mode: "none", isolated: true }, undefined, undefined, ctx,
+		));
+		expect(result.isError).toBe(true);
+		expect(result.content).toEqual([{ type: "text", text: expect.stringContaining("secret protection") }]);
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
+test("AskClaude cannot run full mode in a worktree that forbids it", async () => {
+	const previousHome = process.env.HOME;
+	process.env.HOME = claudeDir;
+	const cwd = join(claudeDir, "restricted-worktree");
+	mkdirSync(join(cwd, ".omp"), { recursive: true });
+	writeFileSync(join(cwd, ".omp", "claude-bridge.json"), JSON.stringify({ askClaude: { allowFullMode: false } }));
+	let tool: Parameters<ExtensionAPI["registerTool"]>[0];
+	queryPlan = answer;
+	try {
+		activate({ on() {}, registerProvider() {}, registerTool(definition: typeof tool) { tool = definition; } } as unknown as ExtensionAPI);
+		const ctx = { cwd, getSystemPrompt: () => [] } as unknown as Parameters<typeof tool.execute>[4];
+		const result = await tool.execute("restricted", { prompt: "delegate", mode: "full", isolated: true }, undefined, undefined, ctx);
+		expect(result.isError).toBe(true);
+		expect(result.content).toEqual([{ type: "text", text: expect.stringContaining("full mode is disabled") }]);
+	} finally {
+		queryPlan = undefined;
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+	}
+});
+
 test("AskClaude receives current compaction history and removes only its temporary copy", async () => {
 	let tool: Parameters<ExtensionAPI["registerTool"]>[0];
 	activate({ on() {}, registerProvider() {}, registerTool(definition: typeof tool) { tool = definition; } } as unknown as ExtensionAPI);
@@ -265,7 +414,15 @@ test("AskClaude receives current compaction history and removes only its tempora
 	const branch = [
 		{ type: "message", id: "before", parentId: null, timestamp: "2026-07-01T00:00:00Z", message: before },
 		{ type: "compaction", id: "compact", parentId: "before", timestamp: "2026-07-01T00:01:00Z", summary: "maintain the existing build contract", firstKeptEntryId: "", tokensBefore: 500 },
-		{ type: "message", id: "latest", parentId: "compact", timestamp: "2026-07-01T00:02:00Z", message: user("latest decision", 12) },
+		{ type: "message", id: "prior-decision", parentId: "compact", timestamp: "2026-07-01T00:02:00Z", message: user("preserve this cross-provider decision", 12) },
+		{ type: "compaction", id: "remote", parentId: "prior-decision", timestamp: "2026-07-01T00:03:00Z", summary: "provider-only summary", firstKeptEntryId: "", tokensBefore: 600, preserveData: {
+			openaiRemoteCompaction: {
+				provider: "openai",
+				replacementHistory: [],
+				compactionItem: { type: "compaction", encrypted_content: "opaque fixture" },
+			},
+		} },
+		{ type: "message", id: "latest", parentId: "remote", timestamp: "2026-07-01T00:04:00Z", message: user("latest decision", 13) },
 	];
 	const ctx = { cwd, getSystemPrompt: () => [], sessionManager: { getBranch: () => branch } } as unknown as Parameters<typeof tool.execute>[4];
 	let temporaryFile: string | undefined;
@@ -274,6 +431,8 @@ test("AskClaude receives current compaction history and removes only its tempora
 		const transcript = readFileSync(temporaryFile, "utf8");
 		expect(transcript).toContain("maintain the existing build contract");
 		expect(transcript).toContain("latest decision");
+		expect(transcript).toContain("preserve this cross-provider decision");
+		expect(transcript).not.toContain("provider-only summary");
 		expect(transcript).not.toContain("discarded verbatim context");
 		expect(options.thinking).toEqual({ type: "disabled" });
 		yield { type: "result", subtype: "success", is_error: false, result: "review complete" };
