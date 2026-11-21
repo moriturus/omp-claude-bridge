@@ -4,7 +4,7 @@ export interface RateLimitInfo {
 	status?: string;
 	rateLimitType?: string;
 	utilization?: number;
-	resetsAt?: string | number | Date;
+	resetsAt?: number;
 }
 
 export interface RateLimitNotice {
@@ -20,13 +20,13 @@ export function rateLimitNotice(
 	threshold: number = RATE_LIMIT_WARN_THRESHOLD,
 ): RateLimitNotice | null {
 	if (info?.status === "rejected") {
-		const resetsAt = info.resetsAt ? new Date(info.resetsAt).toLocaleTimeString() : "unknown";
+		const resetsAt = info.resetsAt === undefined ? "unknown" : new Date(info.resetsAt * 1_000).toLocaleTimeString();
 		return { message: `Claude rate limited (${info.rateLimitType ?? "unknown"}) — resets at ${resetsAt}`, level: "warning" };
 	}
 	if (info?.status === "allowed_warning") {
-		const utilization = Math.round(info.utilization ?? 0);
-		if (utilization >= threshold) {
-			return { message: `Claude rate limit warning: ${utilization}% used (${info.rateLimitType ?? ""})`, level: "warning" };
+		const percentage = (info.utilization ?? 0) * 100;
+		if (percentage >= threshold) {
+			return { message: `Claude rate limit warning: ${Math.round(percentage)}% used (${info.rateLimitType ?? ""})`, level: "warning" };
 		}
 	}
 	return null;

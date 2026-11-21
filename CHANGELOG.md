@@ -7,8 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- Development dependencies target Oh My Pi 19.0.1; typecheck, tests, and extension
-  loading (`omp models -e`) pass on 19.0.1.
+- Require Oh My Pi 19.0.1 or newer. Run the development and CI commands through mise.
+  Include the example configuration in the npm package.
 - Dependencies updated to the newest releases at least one day old (pnpm's default
   `minimumReleaseAge`, now also set for bun in `bunfig.toml` so both lockfiles
   resolve the same versions): `@anthropic-ai/claude-agent-sdk` 0.3.329,
@@ -24,20 +24,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Parallel tool calls lost every result after the first when a session was rebuilt;
   `repairToolPairing` replaced them with synthetic `[no tool result recorded]` errors.
   Consecutive tool results are now persisted in one user message.
-- Reentrant (subagent) queries could delete the parent's session JSONL, overwrite the
-  shared session, or move the parent's cursor. Children now sync to an isolated session
-  that is deleted when they finish.
-- A late tool result from an aborted query wiped the output of a streaming parent and
-  could overwrite the shared cursor; unowned results now end with an isolated empty turn.
+- Claude transport and transcript state now belong to the requesting OMP session.
+  Child sessions cannot reset parent state; `/clear` starts without old history and
+  `/fresh` rebuilds from the retained history. Rebuilds leave prior JSONL and companion files intact.
+- Tool results are correlated by invocation ID. Replayed tool results without a
+  live query are imported and answered. External MCP calls run only in Claude Code.
+- Deferred steering preserves all text and images, and subsequent answers no longer
+  overwrite the responses or usage already streamed in the same OMP turn.
 - SDK error results (`is_error`, `error_*` subtypes) were reported as empty successful
   turns in the provider, AskClaude, and compaction summaries.
 - Aborting during a deferred steer/follow-up replay did not stop the running query.
-- AskClaude ignored `allowFullMode: false` for `defaultMode: "full"` and explicit
-  `mode: "full"`, never streamed progress (`includePartialMessages` missing), and resumed
-  stale sessions marked for rebuild.
-- A typo in `askClaude.defaultMode` (or a non-boolean `allowFullMode`) ran AskClaude
-  with no blocked tools under `bypassPermissions`. Unknown values now fall back to
-  `read` with a warning, and an unknown mode is rejected before the query starts.
+- AskClaude `read` and `none` use strict tool sets without user or project settings.
+  Only the user configuration can choose the Claude executable or default to `full`.
+  AskClaude copies current OMP history, including summaries, and reports cancellation
+  and SDK failures as tool errors.
+- Explicit model IDs take precedence over aliases. Explicitly disabling thinking
+  reaches the SDK. Forward OMP 19's skills format and use the session cwd for compaction.
+- Read rate-limit utilization as a fraction and reset times as Unix seconds.
 - `usage.cost.total` was always `0`.
 - Thinking signatures from `anthropic-messages` models and images in tool results were
   dropped during session rebuild.
@@ -45,7 +48,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to invalid or lossy Zod schemas.
 - AGENTS.md was read from `process.cwd()` instead of the session cwd, and `.omp`
   rewriting missed standalone `.omp` while corrupting names such as `file.omp`.
-- Diagnostic logging could crash a turn when `~/.omp/agent` did not exist.
+- Failures to write diagnostic logs no longer interrupt provider turns.
 
 ## [0.9.0]
 

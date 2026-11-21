@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { createSession, getSessionPath } from "cc-session-io";
 import { convertPiMessages } from "../src/convert.ts";
-import { syncSessionForQuery } from "../src/session-sync.ts";
+import { prepareSession } from "../src/session-sync.ts";
 
 const NOTICE = "<system-notice>xd:// device inventory changed</system-notice>";
 
@@ -131,10 +131,8 @@ test("parallel tool results are persisted once each instead of being replaced by
 		rmSync(claudeDir, { recursive: true, force: true });
 	});
 
-	let shared = null;
-	const store = { get: () => shared, set: (state) => { shared = state; } };
 	const projectDir = join(claudeDir, "project");
-	const sync = syncSessionForQuery(store, [
+	const sessionId = prepareSession(undefined, [
 		{ role: "user", content: "read both", timestamp: 0 },
 		{
 			role: "assistant",
@@ -148,10 +146,9 @@ test("parallel tool results are persisted once each instead of being replaced by
 		},
 		{ role: "toolResult", toolCallId: "call_A", content: [{ type: "text", text: "result A" }], isError: false, timestamp: 2 },
 		{ role: "toolResult", toolCallId: "call_B", content: [{ type: "text", text: "result B" }], isError: false, timestamp: 3 },
-		{ role: "user", content: "next", timestamp: 4 },
-	], projectDir, { isReentrant: false });
+	], projectDir);
 
-	const records = readFileSync(getSessionPath(sync.sessionId, projectDir, claudeDir), "utf8")
+	const records = readFileSync(getSessionPath(sessionId, projectDir, claudeDir), "utf8")
 		.split("\n").filter(Boolean).map((line) => JSON.parse(line));
 	const toolResults = records.flatMap((r) => Array.isArray(r.message?.content) ? r.message.content : [])
 		.filter((b) => b.type === "tool_result");

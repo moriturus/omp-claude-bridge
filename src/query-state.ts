@@ -1,42 +1,31 @@
-// Query state: QueryContext class + context stack.
-//
-// All per-query and per-turn mutable state lives here. Reentrant queries
-// (subagents) push the parent context onto a stack and get a fresh instance.
-// Adding a new field = one property on the class.
-//
-// Extracted from index.ts so tests can import without activating the extension.
-
-import type { AssistantMessage, AssistantMessageEventStream, Model } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-ai-shim";
+import type { AssistantMessage, AssistantMessageEventStream, Context, Model } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-ai-shim";
 import type { McpResult } from "./extract-tool-results.js";
 
-export interface PendingToolCall {
-	toolName: string;
-	resolve: (result: McpResult) => void;
-}
+type StreamedBlock = AssistantMessage["content"][number] & { index?: number; partialJson?: string };
 
 export class QueryContext {
-	// Query-scoped (fully isolated per query)
-	activeQuery: unknown | null = null;
 	currentPiStream: AssistantMessageEventStream | null = null;
-	latestCursor = 0;
-	pendingToolCalls = new Map<string, PendingToolCall>();
+	pendingToolCalls = new Map<string, (result: McpResult) => void>();
 	pendingResults = new Map<string, McpResult>();
-	turnToolCallIds: string[] = [];
-	nextHandlerIdx = 0;
-	deferredUserMessages: string[] = [];
+	approvedToolCalls = new Map<string, string>();
+	turnToolCallIds = new Set<string>();
+	deferredMessages: Context["messages"] = [];
+	streamedMessageId?: string;
+	usageBase?: AssistantMessage["usage"];
+	abort: () => void = () => {};
+
+	constructor(public latestMessages: Context["messages"]) {}
 
 	// Per-turn (reset together)
 	turnOutput: AssistantMessage | null = null;
 	turnStarted = false;
-	turnSawStreamEvent = false;
-	turnSawToolCall = false;
 
-	get turnBlocks(): Array<any> {
+	get turnBlocks(): StreamedBlock[] {
 		if (!this.turnOutput) throw new Error("turnBlocks accessed before resetTurnState");
 		return this.turnOutput.content;
 	}
 
-	resetTurnState(model: Model<any>): void {
+	resetTurnState(model: Model): void {
 		this.turnOutput = {
 			role: "assistant", content: [],
 			api: model.api, provider: model.provider, model: model.id,
@@ -45,36 +34,6 @@ export class QueryContext {
 			stopReason: "stop", timestamp: Date.now(),
 		};
 		this.turnStarted = false;
-		this.turnSawStreamEvent = false;
-		this.turnSawToolCall = false;
-		// turnToolCallIds and nextHandlerIdx are NOT reset — they persist across
-		// tool-result delivery callbacks within the same assistant message.
+		this.usageBase = undefined;
 	}
-}
-
-let _ctx = new QueryContext();
-const contextStack: QueryContext[] = [];
-
-export function ctx(): QueryContext { return _ctx; }
-
-export function stackDepth(): number { return contextStack.length; }
-
-export function pushContext(): void {
-	if (!_ctx.activeQuery) throw new Error("pushContext() called with no active query");
-	contextStack.push(_ctx);
-	_ctx = new QueryContext();
-}
-
-export function popContext(): void {
-	if (contextStack.length === 0) throw new Error("popContext() called with empty stack");
-	const parent = contextStack[contextStack.length - 1];
-	parent.deferredUserMessages.push(..._ctx.deferredUserMessages);
-	_ctx = contextStack.pop()!;
-}
-
-// Test-only: drop all state so test files can start from a clean module.
-// Not called from production.
-export function resetStack(): void {
-	_ctx = new QueryContext();
-	contextStack.length = 0;
 }

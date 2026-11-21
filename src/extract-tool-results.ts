@@ -32,7 +32,7 @@ export function toolResultToMcpContent(
 
 // Returns { results, stopIdx } so callers can log the walk boundary.
 export function extractAllToolResults(
-	messages: Array<{ role: string; content?: unknown; toolCallId?: string; isError?: boolean; [key: string]: unknown }>,
+	messages: Array<{ role: string; content?: unknown; toolCallId?: string; isError?: boolean }>,
 ): { results: McpResult[]; stopIdx: number } {
 	const results: McpResult[] = [];
 	let stopIdx = -1;

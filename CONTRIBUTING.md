@@ -8,47 +8,44 @@ sizes are welcome — bug reports, docs fixes, and features alike.
 ```bash
 git clone https://github.com/DevVig/omp-claude-bridge.git
 cd omp-claude-bridge
-bun install        # or: npm install
+mise exec -- bun install --frozen-lockfile
 ```
+
+Install the project toolchain with [mise](https://mise.jdx.dev). Use `mise exec -- bun …` for Bun commands without activation, or run `mise install` followed by your normal activation setup.
 
 Requirements:
 - Node.js >= 20
-- [Bun](https://bun.sh) (recommended) or npm
-- An Oh My Pi install for end-to-end testing ([omp.sh](https://omp.sh))
+- Bun (required for the full test suite; npm is not a substitute)
+- Oh My Pi 19.0.1 or newer for end-to-end testing ([omp.sh](https://omp.sh))
 
 ## Developing against a live Oh My Pi
 
 Point Oh My Pi at your working copy so changes load on the next run:
 
 ```bash
-pi install /absolute/path/to/omp-claude-bridge
+omp plugin install /absolute/path/to/omp-claude-bridge
 ```
 
-Enable debug logging while iterating:
-
 ```bash
-CLAUDE_BRIDGE_DEBUG=1 pi --list-models claude-bridge
+CLAUDE_BRIDGE_DEBUG=1 omp models claude-bridge
 # logs -> ~/.omp/agent/claude-bridge.log
 ```
 
 ## Checks before opening a PR
 
 ```bash
-bun run typecheck   # tsc --noEmit
-bun run test        # node --test unit suite
+mise exec -- bun run typecheck
+mise exec -- bun run test
 ```
 
-Please make sure both pass. CI runs the same two checks on every pull request.
+The full suite includes a Bun test, so running the Node unit tests through npm alone does not verify the suite. CI runs both checks on every pull request.
 
 ## Coding guidelines
 
 - TypeScript, ESM, tabs for indentation (match the surrounding files).
-- Keep model routing changes in `src/models.ts`. It has **no runtime imports**,
-  so it stays unit-testable in isolation — add a case to
-  `tests/unit-context-window.mjs` when you touch context routing.
-- Context-window behavior is derived from **measured** Claude Agent SDK output,
-  not advertised metadata. If you change a model mapping, note how you verified
-  the served window (the `result: served contextWindow=...` debug line).
+- Keep model routing in `src/models.ts` and cover changes in `tests/unit-models.mjs`.
+- Preserve the canonical OMP catalog metadata. To investigate a runtime mismatch,
+  compare it with the `result: served contextWindow=...` debug line.
 
 ## Reporting bugs
 

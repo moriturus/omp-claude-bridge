@@ -19,16 +19,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Set up mise
+        uses: jdx/mise-action@v3
 
       - name: Install dependencies
-        run: bun install
+        run: mise exec -- bun install --frozen-lockfile
 
       - name: Typecheck
-        run: bun run typecheck
+        run: mise exec -- bun run typecheck
 
       - name: Unit tests
-        run: bun run test
+        run: mise exec -- bun run test

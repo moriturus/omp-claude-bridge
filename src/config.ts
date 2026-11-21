@@ -7,7 +7,7 @@ import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils/dirs";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 
 export type AskClaudeMode = "full" | "read" | "none";
 
@@ -45,9 +45,22 @@ export function tryParseJson(path: string): Partial<Config> {
 export function loadConfig(cwd: string): Config {
 	const global = tryParseJson(join(homedir(), ".omp", "agent", "claude-bridge.json"));
 	const project = tryParseJson(join(cwd, CONFIG_DIR_NAME, "claude-bridge.json"));
+	const { pathToClaudeCodeExecutable: globalExecutable, ...globalProvider } = global.provider ?? {};
+	const { pathToClaudeCodeExecutable: _projectExecutable, ...projectProvider } = project.provider ?? {};
+	const { defaultMode: projectMode, ...projectAsk } = project.askClaude ?? {};
+	const globalFull = global.askClaude?.allowFullMode;
 	return {
-		askClaude: { ...global.askClaude, ...project.askClaude },
-		provider: { ...global.provider, ...project.provider },
+		askClaude: {
+			...global.askClaude,
+			...projectAsk,
+			defaultMode: projectMode && projectMode !== "full" ? projectMode : global.askClaude?.defaultMode,
+			...(globalFull !== undefined && globalFull !== true ? { allowFullMode: false } : {}),
+		},
+		provider: {
+			...globalProvider,
+			...projectProvider,
+			...(typeof globalExecutable === "string" && isAbsolute(globalExecutable) ? { pathToClaudeCodeExecutable: globalExecutable } : {}),
+		},
 	};
 }
 

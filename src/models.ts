@@ -32,5 +32,5 @@ export function buildModels<T extends ProviderModelConfig>(ompModels: T[]): Prov
 
 export function resolveModel<T extends { id: string }>(models: T[], input: string): T | undefined {
 	const lower = input.toLowerCase();
-	return models.find((m) => m.id === lower || m.id.includes(lower));
+	return models.find((model) => model.id === lower) ?? models.find((model) => model.id.includes(lower));
 }
