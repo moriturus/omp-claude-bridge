@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0]
+
 ### Changed
 - Require Oh My Pi 19.0.1 or newer. Run the development and CI commands through mise.
   Include the example configuration in the npm package.
