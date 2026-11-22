@@ -1,6 +1,6 @@
 import { createAssistantMessageEventStream as newAssistantMessageEventStream, StringEnum, Type, getModels, type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions, type Tool, type Usage } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-ai-shim";
 import { type ExtensionAPI, type ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
-import { SettingsManager } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim";
+import { findScopedSettings, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { cfgSecretsEnabled } from "@oh-my-pi/pi-coding-agent/secrets/settings";
 import { keyHint } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import { buildSessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
@@ -418,6 +418,25 @@ class BridgeSession {
 // requesting session, including after /fresh changes the provider-facing ID.
 const payloadSessions = new WeakMap<object, BridgeSession>();
 
+function secretsEnabled(cwd: string): boolean {
+	return cfgSecretsEnabled.get(findScopedSettings(cwd) ?? Settings.isolated());
+}
+
+function bashDescription(tool: Tool, systemPrompt: Context["systemPrompt"]): string {
+	// shortcut: read OMP's rendered command sections until the provider context exposes a structured catalog.
+	const commands = /^# Tool Commands\nEach listed tool is also a command in `[^`\n]+`: ([\s\S]*?)\n⁂ /m.exec(systemPrompt?.[0] ?? "")?.[1];
+	const project = systemPrompt?.findLast((block) => block.startsWith("<project-context>\n"));
+	const end = project?.lastIndexOf("\n</project-context>\n") ?? -1;
+	const routes = end < 0 ? undefined : /^## MCP Tool Commands\n+(?:Run each as a command with the bash tool\.[^\n]*\n+)?((?:- [^\n]+\n*)*(?:Additional mounted MCP tools omitted:[^\n]+)?)/m.exec(project?.slice(end) ?? "")?.[1].trim();
+	if (!commands && !routes) return tool.description;
+	return [
+		tool.description,
+		`Run these OMP tool commands with \`${MCP_TOOL_PREFIX}bash\`, not Claude Code's shell.`,
+		commands?.trim(),
+		routes && `## MCP Tool Commands\n${routes}`,
+	].filter(Boolean).join("\n\n");
+}
+
 function resolveMcpTools(context: Context, excludeToolName?: string): {
 	mcpTools: Tool[];
 	customToolNameToSdk: Map<string, string>;
@@ -432,7 +451,7 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 	for (const tool of context.tools) {
 		if (tool.name === excludeToolName) continue;
 		const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
-		mcpTools.push(tool);
+		mcpTools.push(tool.name === "bash" ? { ...tool, description: bashDescription(tool, context.systemPrompt) } : tool);
 		customToolNameToSdk.set(tool.name, sdkName);
 		customToolNameToSdk.set(tool.name.toLowerCase(), sdkName);
 		customToolNameToPi.set(sdkName, tool.name);
@@ -831,7 +850,7 @@ async function runProvider(
 		const cwd = options?.cwd ?? process.cwd();
 		const config = loadConfig(cwd);
 		const settings = config.provider;
-		const protectSecrets = session.protectSecrets ?? cfgSecretsEnabled.get(SettingsManager.create(cwd));
+		const protectSecrets = session.protectSecrets ?? secretsEnabled(cwd);
 		const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(
 			bridgeTools && options?.toolChoice !== "none" ? context : { ...context, tools: undefined },
 			config.askClaude?.name ?? "AskClaude",
@@ -1041,7 +1060,7 @@ export default function (pi: ExtensionAPI) {
 		const owner = payloadSessions.get(payload);
 		if (!owner) return;
 		owner.ui = ctx.ui;
-		owner.protectSecrets = cfgSecretsEnabled.get(SettingsManager.create(ctx.cwd));
+		owner.protectSecrets = secretsEnabled(ctx.cwd);
 		session = owner;
 	});
 	// OMP owns transport disposal on clear/fresh, switch and shutdown. Tree
@@ -1052,7 +1071,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {
 		if (ctx.model?.baseUrl !== "claude-bridge") return undefined;
 		// The native path applies the session's secret obfuscator before sending the summary request.
-		if (cfgSecretsEnabled.get(SettingsManager.create(ctx.cwd))) return undefined;
+		if (secretsEnabled(ctx.cwd)) return undefined;
 		debug(
 			`session_before_compact: takeover isSplitTurn=${event.preparation.isSplitTurn} ` +
 			`messages=${event.preparation.messagesToSummarize.length} turnPrefix=${event.preparation.turnPrefixMessages.length}`,
@@ -1200,7 +1219,7 @@ export default function (pi: ExtensionAPI) {
 					};
 				}
 
-				if (cfgSecretsEnabled.get(SettingsManager.create(ctx.cwd))) {
+				if (secretsEnabled(ctx.cwd)) {
 					return {
 						content: [{ type: "text" as const, text: "Error: AskClaude is unavailable while OMP secret protection is enabled." }],
 						isError: true,
