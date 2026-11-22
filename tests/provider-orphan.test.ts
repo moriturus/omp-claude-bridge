@@ -3,8 +3,7 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
 import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { withActiveSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { SettingsManager } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim";
+import { Settings, withActiveSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { cfgSecretsEnabled } from "@oh-my-pi/pi-coding-agent/secrets/settings";
 import type { AssistantMessage, Context, Model, ProviderSessionState } from "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-ai-shim";
 import { getSessionPath } from "cc-session-io";
@@ -196,7 +195,7 @@ test("the provider does not send raw project instructions with secret protection
 	mkdirSync(cwd);
 	const marker = "RAW_PROJECT_SECRET_FIXTURE";
 	writeFileSync(join(cwd, "AGENTS.md"), `Synthetic instruction containing ${marker}`);
-	const settings = SettingsManager.inMemory();
+	const settings = Settings.isolated();
 	cfgSecretsEnabled.set(settings, true);
 	queryPlan = async function* ({ options }) {
 		const prompt = options.systemPrompt;
@@ -218,7 +217,7 @@ test("secret protection rebuilds previously unprotected Claude history", async (
 	queryPlan = answer;
 	try {
 		const previous = await __test.streamClaudeAgentSdk(model, { messages: [original] }, options).result();
-		const settings = SettingsManager.inMemory();
+		const settings = Settings.isolated();
 		cfgSecretsEnabled.set(settings, true);
 		queryPlan = async function* (request) {
 			const id = request.options.resume;
@@ -309,6 +308,37 @@ test("the native close boundary rebuilds /fresh history and does not resurrect /
 	}
 });
 
+test("Claude can discover OMP tool commands through its bridged bash tool", async () => {
+	const options = useProvider("tool-commands");
+	const context: Context = {
+		messages: [user("find the mounted tools")],
+		tools: [{ name: "bash", description: "Run a shell command", parameters: { type: "object", properties: {} } }] as Context["tools"],
+		systemPrompt: [
+			"# Tool Commands\nEach listed tool is also a command in `bash`: run `<tool> --help`.\n\n## More commands (help on demand)\n- `ast` — Search syntax trees\n\n⁂ Tool Policy\nUnrelated host policy",
+			"<project-context>\nUnrelated project context\n</project-context>\n\n## MCP Tool Commands\n\nRun each as a command with the bash tool.\n- fixture search → `mcp__fixture__search` — Search fixtures\n\n## MCP Server Instructions\nUnrelated server instructions",
+		],
+	};
+	queryPlan = answer;
+	try {
+		const output = await __test.streamClaudeAgentSdk(model, context, options).result();
+		expect(textOf(output)).toBe("answered");
+		const server = requests.at(-1)?.options.mcpServers?.["custom-tools"];
+		expect(server).toHaveProperty("instance");
+		if (!server || !("instance" in server)) throw new Error("Expected an SDK MCP server");
+		// The SDK mock above stores its original tool definitions as the instance.
+		const instance = server.instance as unknown as { tools: { name: string; description: string }[] };
+		const bash = instance.tools.find((tool) => tool.name === "bash");
+		expect(bash?.description).toContain("`mcp__custom-tools__bash`");
+		expect(bash?.description).toContain("`ast` — Search syntax trees");
+		expect(bash?.description).toContain("`mcp__fixture__search` — Search fixtures");
+		expect(bash?.description).not.toContain("Unrelated");
+		await __test.streamClaudeAgentSdk(model, context, { ...options, toolChoice: "none" }).result();
+		expect(requests.at(-1)?.options.mcpServers).toBeUndefined();
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
 test("a skipped MCP call cannot shift another result; external tools and steering stay on their own paths", async () => {
 	const source = { name: "custom-tools", source: "sdk" };
 	const local = "mcp__custom-tools__read";
@@ -370,7 +400,7 @@ test("a skipped MCP call cannot shift another result; external tools and steerin
 test("AskClaude does not bypass active secret protection", async () => {
 	let tool: Parameters<ExtensionAPI["registerTool"]>[0];
 	activate({ on() {}, registerProvider() {}, registerTool(definition: typeof tool) { tool = definition; } } as unknown as ExtensionAPI);
-	const settings = SettingsManager.inMemory();
+	const settings = Settings.isolated();
 	cfgSecretsEnabled.set(settings, true);
 	const ctx = { cwd: join(claudeDir, "protected-worktree"), getSystemPrompt: () => [] } as unknown as Parameters<typeof tool.execute>[4];
 	queryPlan = answer;

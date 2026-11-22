@@ -121,6 +121,8 @@ The bridge exposes these canonical picker entries:
 
 Bash commands issued by Claude Code get a 120-second default timeout (matching Claude Code's default), since OMP's bash has no timeout by default.
 
+On OMP 19.1.0, tools mounted as shell commands are listed in the bridged Bash tool's description. Claude Code runs them through OMP Bash (for example, `<tool> --help`), so OMP still controls tool availability and approvals.
+
 ## AskClaude tool
 
 Available whenever the active provider is **not** claude-bridge. Your current model can hand work to Claude Code and wait for the result:

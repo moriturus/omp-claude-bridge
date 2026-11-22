@@ -18,6 +18,8 @@ Requirements:
 - Bun (required for the full test suite; npm is not a substitute)
 - Oh My Pi 19.0.1 or newer for end-to-end testing ([omp.sh](https://omp.sh))
 
+The development lockfiles use Oh My Pi 19.1.0. For a smoke test of Bash-mounted tool commands, use the 19.1.0 CLI or newer.
+
 ## Developing against a live Oh My Pi
 
 Point Oh My Pi at your working copy so changes load on the next run:
