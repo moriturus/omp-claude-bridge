@@ -23,7 +23,7 @@
 
 Authentication is delegated unchanged to the official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk). The bridge provides no login flow and does not read, store, validate, log, or inject Claude credentials.
 
-**Version 0.11.0 requires Oh My Pi 19.0.1 or newer.** See the [0.11.0 changelog](CHANGELOG.md#0110) for upgrade notes and behavior changes.
+**Version 0.11.1 requires Oh My Pi 19.0.1 or newer.** See the [0.11.1 changelog](CHANGELOG.md#0111) for upgrade notes and behavior changes.
 
 <div align="center">
 <a href="assets/claude-bridge1.png"><img src="assets/claude-bridge1.png" width="49%"></a>&nbsp;
