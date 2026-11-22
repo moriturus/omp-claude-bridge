@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1]
+
 ### Fixed
 - Preserve discovery of OMP 19.1.0's Bash-mounted tools, including OMP-managed MCP tools, through the bridged Bash tool. OMP 19.0.1 remains supported.
 - Read secret protection from OMP's scoped settings without loading the legacy settings shim, which imports unavailable browser-relay code in the 19.1.0 npm package.
