@@ -27,6 +27,7 @@ import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
 import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
 import { rateLimitNotice } from "./rate-limit.js";
 import { messageAnchor, prepareSession, type SessionState } from "./session-sync.js";
+import { claudeUsageProvider } from "./usage.js";
 
 function calculateCost(model: Model, usage: Usage): Usage["cost"] {
 	usage.cost.input = (model.cost.input / 1_000_000) * usage.input;
@@ -1110,6 +1111,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerProvider(PROVIDER_ID, {
 		baseUrl: PROVIDER_ID, api: PROVIDER_ID, apiKey: "not-used",
 		models: MODELS, streamSimple: streamClaudeAgentSdk,
+		usage: claudeUsageProvider(config.provider?.pathToClaudeCodeExecutable),
 	});
 
 	// --- AskClaude tool ---

@@ -95,6 +95,7 @@ The bridge calls the official Claude Agent SDK's `query()` without an `env` over
 
 The bridge has no login flow and does not handle credentials. Anthropic's [June 15 support update](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) currently says third-party Agent SDK usage draws from subscription limits. The [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk) also says third-party developers may not offer Claude.ai login or rate limits without prior approval. This repository does not claim explicit Anthropic approval; policy and billing behavior are subject to Anthropic change.
 
+Use `/usage` in OMP, or run `omp usage --provider claude-bridge`, to see Claude subscription utilization and reset times. The bridge reads the windows Claude Code reports (such as 5 hours, 7 days, and per-model limits) without sending a model prompt or reading credentials. API-key sessions have no subscription windows. This display uses an experimental SDK API and requires a Claude Code executable that supports it.
 
 ## Context handling
 

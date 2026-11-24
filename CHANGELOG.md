@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Display Claude subscription usage and reset times through OMP's `/usage` and `omp usage --provider claude-bridge`.
+
 ## [0.11.1]
 
 ### Fixed
