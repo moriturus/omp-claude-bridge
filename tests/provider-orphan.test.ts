@@ -21,6 +21,7 @@ function gate(): Gate {
 type QueryRequest = { prompt: string | AsyncIterable<SDKUserMessage>; options: Options };
 type QueryPlan = (request: QueryRequest) => AsyncGenerator<{ type: string } & Record<string, unknown>>;
 let queryPlan: QueryPlan | undefined;
+let sdkHasUsage = false;
 const requests: QueryRequest[] = [];
 
 const releaseParent = gate();
@@ -43,7 +44,22 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
 			yield { type: "result", subtype: "success", is_error: false, result: "Hello" };
 		}
 		const iterator = queryPlan?.(request) ?? run();
-		return Object.assign(iterator, { interrupt: async () => {}, close: () => {} });
+		return Object.assign(iterator, {
+			interrupt: async () => {},
+			close: () => {},
+			...(sdkHasUsage ? {
+				async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() {
+					// Claude Code rejects live usage in essential-traffic-only mode.
+					const env = request.options.env ?? process.env;
+					return {
+						rate_limits_available: true,
+						rate_limits: env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ? null : {
+							five_hour: { utilization: 42, resets_at: null },
+						},
+					};
+				},
+			} : {}),
+		});
 	},
 }));
 // Dynamic import: the SDK mock above must be registered before index.ts loads.
@@ -75,15 +91,30 @@ afterAll(() => {
 	rmSync(claudeDir, { recursive: true, force: true });
 });
 
-test("an SDK without the experimental usage method reports no quota", async () => {
-	let usage: NonNullable<Parameters<ExtensionAPI["registerProvider"]>[1]["usage"]>;
-	activate({
-		on() {},
-		registerProvider(_name, config) { usage = config.usage!; },
-		registerTool() {},
-	} satisfies Pick<ExtensionAPI, "on" | "registerProvider" | "registerTool"> as ExtensionAPI);
+test.each([
+	["an SDK without the experimental usage method reports no quota", false, undefined, null],
+	["subscription usage works without a cached report", true, undefined, 42],
+	["an explicit essential-traffic-only setting is respected", true, "1", null],
+] as const)("%s", async (_name, supported, traffic, expectedUsed) => {
+	const previous = process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+	if (traffic === undefined) delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+	else process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = traffic;
+	sdkHasUsage = supported;
+	try {
+		let usage: NonNullable<Parameters<ExtensionAPI["registerProvider"]>[1]["usage"]>;
+		activate({
+			on() {},
+			registerProvider(_name, config) { usage = config.usage!; },
+			registerTool() {},
+		} satisfies Pick<ExtensionAPI, "on" | "registerProvider" | "registerTool"> as ExtensionAPI);
 
-	expect(await usage!.fetchUsage({ provider: "claude-bridge", credential: { type: "api_key" } }, { fetch })).toBeNull();
+		const report = await usage!.fetchUsage({ provider: "claude-bridge", credential: { type: "api_key" } }, { fetch });
+		expect(report?.limits[0]?.amount.used ?? null).toBe(expectedUsed);
+	} finally {
+		sdkHasUsage = false;
+		if (previous === undefined) delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+		else process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = previous;
+	}
 });
 
 test("a child tool replay leaves the parent's active stream and transcript intact", async () => {
