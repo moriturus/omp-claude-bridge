@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0-beta.2]
+
+### Added
+- Show Claude Extra Usage and its reported USD spend and monthly cap in OMP's usage views.
+
+### Fixed
+- Pass quota status to OMP so interactive `/usage` bars use the theme's normal, warning, and exhausted colors.
+
 ## [0.12.0-beta.1]
 
 ### Added

@@ -97,6 +97,8 @@ The bridge has no login flow and does not handle credentials. Anthropic's [June 
 
 Use `/usage` in OMP, or run `omp usage --provider claude-bridge`, to see the usage and reset times of your existing Claude subscription. The bridge displays the windows Claude Code reports (such as 5 hours, 7 days, and per-model limits) without sending a model prompt or reading credentials. The display requires experimental usage support in both the Agent SDK and Claude Code; a fresh fetch returns no subscription windows for API-key sessions or unsupported versions. OMP caches usage reports. After switching Claude accounts or authentication methods, run `omp usage invalidate --provider claude-bridge` to discard the previous report.
 
+When Claude Code reports enabled USD extra usage, OMP shows a **Claude Extra Usage** row. Open `/usage` **Details** to see the amount used and any monthly cap. This is extra spend, not the balance of promotional credits or saved resets.
+
 ## Context handling
 
 The bridge registers exactly one canonical OMP catalog entry per supported model and passes that model ID unchanged to Claude Code. It does not create context-window aliases, rewrite model IDs, or advertise account-entitlement variants.
