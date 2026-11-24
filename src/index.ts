@@ -1049,7 +1049,8 @@ export default function (pi: ExtensionAPI) {
 	// Keep OMP in sole control of compaction and prevent Claude.ai cloud MCP
 	// auto-discovery. Set only non-credential controls in the inherited parent
 	// environment; query() receives no env object or authentication material.
-	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+	// Essential-traffic-only mode also blocks the subscription usage endpoint.
+	process.env.DISABLE_TELEMETRY = "1";
 	process.env.DISABLE_AUTO_COMPACT = "1";
 	process.env.ENABLE_CLAUDEAI_MCP_SERVERS = "0";
 

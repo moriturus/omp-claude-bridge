@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0-beta.3]
+
+### Fixed
+- Fetch live Claude subscription usage without first opening Claude Code. The bridge still disables telemetry, but no longer forces essential-traffic-only mode.
+
 ## [0.12.0-beta.2]
 
 ### Added

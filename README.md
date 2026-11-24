@@ -88,7 +88,7 @@ To delegate from another provider instead, just ask: *"Ask Claude to review this
 
 ## Authentication and billing
 
-The bridge calls the official Claude Agent SDK's `query()` without an `env` override, credential material, auth callback, or login command. Claude Code inherits the parent environment, remains the sole credential resolver, and applies its own authentication precedence. The bridge sets only non-credential runtime controls that suppress nonessential traffic, native Claude Code autocompaction, and Claude.ai cloud MCP auto-discovery.
+The bridge calls the official Claude Agent SDK's `query()` without an `env` override, credential material, auth callback, or login command. Claude Code inherits the parent environment, remains the sole credential resolver, and applies its own authentication precedence. The bridge sets only non-credential runtime controls that disable telemetry, native Claude Code autocompaction, and Claude.ai cloud MCP auto-discovery.
 
 - An existing local Claude Code login currently draws from the user's Claude subscription quota.
 - `ANTHROPIC_API_KEY` uses Anthropic API billing.
@@ -96,6 +96,8 @@ The bridge calls the official Claude Agent SDK's `query()` without an `env` over
 The bridge has no login flow and does not handle credentials. Anthropic's [June 15 support update](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) currently says third-party Agent SDK usage draws from subscription limits. The [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk) also says third-party developers may not offer Claude.ai login or rate limits without prior approval. This repository does not claim explicit Anthropic approval; policy and billing behavior are subject to Anthropic change.
 
 Use `/usage` in OMP, or run `omp usage --provider claude-bridge`, to see the usage and reset times of your existing Claude subscription. The bridge displays the windows Claude Code reports (such as 5 hours, 7 days, and per-model limits) without sending a model prompt or reading credentials. The display requires experimental usage support in both the Agent SDK and Claude Code; a fresh fetch returns no subscription windows for API-key sessions or unsupported versions. OMP caches usage reports. After switching Claude accounts or authentication methods, run `omp usage invalidate --provider claude-bridge` to discard the previous report.
+
+If you explicitly set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, Claude Code blocks live subscription usage requests. Cached usage may still appear.
 
 When Claude Code reports enabled USD extra usage, OMP shows a **Claude Extra Usage** row. Open `/usage` **Details** to see the amount used and any monthly cap. This is extra spend, not the balance of promotional credits or saved resets.
 
