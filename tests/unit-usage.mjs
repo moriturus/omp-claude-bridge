@@ -23,3 +23,13 @@ test("shows each reported quota window once, including zero utilization and vali
 test("does not report subscription usage for an API-key session", () => {
 	assert.equal(toUsageReport({ rate_limits_available: false, rate_limits: null }), null);
 });
+
+test("model scope labels cannot inject terminal controls or extra lines", () => {
+	const report = toUsageReport({
+		rate_limits_available: true,
+		rate_limits: {
+			model_scoped: [{ display_name: "\x1b[31mFable\x1b[0m\nMax", utilization: 30, resets_at: null }],
+		},
+	});
+	assert.equal(report.limits[0].label, "7 Day (Fable Max)");
+});

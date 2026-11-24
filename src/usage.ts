@@ -1,4 +1,5 @@
 import { addAbortListener } from "node:events";
+import { stripVTControlCharacters } from "node:util";
 import { query, type SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
 import type { UsageLimit, UsageProvider, UsageReport } from "@oh-my-pi/pi-ai";
 import { PROVIDER_ID } from "./convert.js";
@@ -27,7 +28,9 @@ export function toUsageReport(response: SDKControlGetUsageResponse): UsageReport
 	add("5h", quota.five_hour);
 	add("7d", quota.seven_day);
 	for (const row of Array.isArray(quota.model_scoped) ? quota.model_scoped : []) {
-		if (typeof row?.display_name === "string" && row.display_name.trim()) add("7d", row, row.display_name.trim());
+		if (typeof row?.display_name !== "string") continue;
+		const label = stripVTControlCharacters(row.display_name).replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").trim();
+		if (label) add("7d", row, label);
 	}
 	add("7d", quota.seven_day_opus, "Opus");
 	add("7d", quota.seven_day_sonnet, "Sonnet");
