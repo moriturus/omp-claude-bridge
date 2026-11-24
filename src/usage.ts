@@ -53,6 +53,7 @@ export function claudeUsageProvider(pathToClaudeCodeExecutable?: string): UsageP
 			});
 			try {
 				// shortcut: SDK usage API is experimental, switch to the stable method once published.
+				if (typeof run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET !== "function") return null;
 				return toUsageReport(await run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }));
 			} finally {
 				run.close();
