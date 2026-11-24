@@ -5,6 +5,41 @@ import type { UsageLimit, UsageProvider, UsageReport } from "@oh-my-pi/pi-ai";
 import { PROVIDER_ID } from "./convert.js";
 
 type UsageBucket = { utilization: number | null; resets_at: string | null };
+type UsageQuota = NonNullable<SDKControlGetUsageResponse["rate_limits"]>;
+
+function quotaStatus(usedFraction: number): UsageLimit["status"] {
+	return usedFraction >= 1 ? "exhausted" : usedFraction >= 0.9 ? "warning" : "ok";
+}
+
+function extraUsageLimit(extra: UsageQuota["extra_usage"]): UsageLimit | undefined {
+	if (extra?.is_enabled !== true) return;
+	const { currency, used_credits: usedCents, monthly_limit: limitCents } = extra;
+	// shortcut: OMP only has a USD money unit, extend when it supports other currencies.
+	if (currency != null && (typeof currency !== "string" || currency.toUpperCase() !== "USD")) return;
+	if (typeof usedCents !== "number" || !Number.isSafeInteger(usedCents) || usedCents < 0) return;
+
+	const used = usedCents / 100;
+	const row: UsageLimit = {
+		id: "extra",
+		label: "Claude Extra Usage",
+		scope: { provider: PROVIDER_ID, windowId: "extra" },
+		amount: { unit: "usd", used },
+	};
+	if (limitCents === null) return row;
+	if (!Number.isSafeInteger(limitCents) || limitCents <= 0) return;
+
+	const limit = limitCents / 100;
+	const remainingCents = Math.max(0, limitCents - usedCents);
+	const usedFraction = usedCents / limitCents;
+	row.amount.limit = limit;
+	row.amount.remaining = remainingCents / 100;
+	row.amount.usedFraction = usedFraction;
+	row.amount.remainingFraction = remainingCents / limitCents;
+	row.status = quotaStatus(usedFraction);
+	// OMP's TUI shows only a percentage for capped rows; put the amounts in Details.
+	row.notes = [`Claude Extra Usage: $${used.toFixed(2)} used of $${limit.toFixed(2)} monthly limit`];
+	return row;
+}
 
 export function toUsageReport(response: SDKControlGetUsageResponse): UsageReport | null {
 	const { rate_limits: quota } = response;
@@ -17,12 +52,14 @@ export function toUsageReport(response: SDKControlGetUsageResponse): UsageReport
 		if (limits.has(id)) return;
 		const windowLabel = windowId === "5h" ? "5 Hour" : "7 Day";
 		const resetsAt = typeof row.resets_at === "string" ? Date.parse(row.resets_at) : NaN;
+		const usedFraction = row.utilization / 100;
 		limits.set(id, {
 			id,
 			label: scope ? `${windowLabel} (${scope})` : windowLabel,
 			scope: { provider: PROVIDER_ID, windowId },
 			window: { id: windowId, label: windowLabel, resetsAt: Number.isFinite(resetsAt) ? resetsAt : undefined },
-			amount: { unit: "percent", used: row.utilization },
+			amount: { unit: "percent", used: row.utilization, usedFraction },
+			status: quotaStatus(usedFraction),
 		});
 	};
 	add("5h", quota.five_hour);
@@ -35,6 +72,8 @@ export function toUsageReport(response: SDKControlGetUsageResponse): UsageReport
 	add("7d", quota.seven_day_opus, "Opus");
 	add("7d", quota.seven_day_sonnet, "Sonnet");
 	add("7d", quota.seven_day_oauth_apps, "OAuth apps");
+	const extra = extraUsageLimit(quota.extra_usage);
+	if (extra) limits.set(extra.id, extra);
 	return limits.size ? { provider: PROVIDER_ID, fetchedAt: Date.now(), limits: [...limits.values()] } : null;
 }
 
