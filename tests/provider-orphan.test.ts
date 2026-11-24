@@ -75,6 +75,17 @@ afterAll(() => {
 	rmSync(claudeDir, { recursive: true, force: true });
 });
 
+test("an SDK without the experimental usage method reports no quota", async () => {
+	let usage: NonNullable<Parameters<ExtensionAPI["registerProvider"]>[1]["usage"]>;
+	activate({
+		on() {},
+		registerProvider(_name, config) { usage = config.usage!; },
+		registerTool() {},
+	} satisfies Pick<ExtensionAPI, "on" | "registerProvider" | "registerTool"> as ExtensionAPI);
+
+	expect(await usage!.fetchUsage({ provider: "claude-bridge", credential: { type: "api_key" } }, { fetch })).toBeNull();
+});
+
 test("a child tool replay leaves the parent's active stream and transcript intact", async () => {
 	const options = useProvider("parent");
 	const first = user("hi");

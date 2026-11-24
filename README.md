@@ -23,7 +23,7 @@
 
 Authentication is delegated unchanged to the official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk). The bridge provides no login flow and does not read, store, validate, log, or inject Claude credentials.
 
-**Version 0.11.1 requires Oh My Pi 19.0.1 or newer.** See the [0.11.1 changelog](CHANGELOG.md#0111) for upgrade notes and behavior changes.
+**Version 0.12.0-beta.1 requires Oh My Pi 19.0.1 or newer.** See the [0.12.0-beta.1 changelog](CHANGELOG.md#0120-beta1) for behavior changes.
 
 <div align="center">
 <a href="assets/claude-bridge1.png"><img src="assets/claude-bridge1.png" width="49%"></a>&nbsp;
@@ -95,6 +95,7 @@ The bridge calls the official Claude Agent SDK's `query()` without an `env` over
 
 The bridge has no login flow and does not handle credentials. Anthropic's [June 15 support update](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) currently says third-party Agent SDK usage draws from subscription limits. The [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk) also says third-party developers may not offer Claude.ai login or rate limits without prior approval. This repository does not claim explicit Anthropic approval; policy and billing behavior are subject to Anthropic change.
 
+Use `/usage` in OMP, or run `omp usage --provider claude-bridge`, to see the usage and reset times of your existing Claude subscription. The bridge displays the windows Claude Code reports (such as 5 hours, 7 days, and per-model limits) without sending a model prompt or reading credentials. The display requires experimental usage support in both the Agent SDK and Claude Code; a fresh fetch returns no subscription windows for API-key sessions or unsupported versions. OMP caches usage reports. After switching Claude accounts or authentication methods, run `omp usage invalidate --provider claude-bridge` to discard the previous report.
 
 ## Context handling
 
