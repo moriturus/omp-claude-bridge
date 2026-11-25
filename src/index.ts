@@ -2,13 +2,13 @@ import { createAssistantMessageEventStream as newAssistantMessageEventStream, St
 import { type ExtensionAPI, type ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
 import { findScopedSettings, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { cfgSecretsEnabled } from "@oh-my-pi/pi-coding-agent/secrets/settings";
-import { keyHint } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import { buildSessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
 import type { CompactionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import { compact, defaultConvertToLlm } from "@oh-my-pi/pi-agent-core/compaction";
 import { createSdkMcpServer, query, type EffortLevel, type Options, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
-import { Text } from "@oh-my-pi/pi-tui";
+import * as tui from "@oh-my-pi/pi-tui";
+import { sanitizeText } from "@oh-my-pi/pi-utils/sanitize-text";
 import { deleteSession } from "cc-session-io";
 import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
@@ -28,6 +28,20 @@ import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
 import { rateLimitNotice } from "./rate-limit.js";
 import { messageAnchor, prepareSession, type SessionState } from "./session-sync.js";
 import { claudeUsageProvider } from "./usage.js";
+
+type AskClaudeTheme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderCall"]>>[2];
+type AskClaudeSpan = { text: string; color: Parameters<AskClaudeTheme["fg"]>[0]; bold?: true };
+
+function renderAskClaude(theme: AskClaudeTheme, spans: AskClaudeSpan[]): InstanceType<typeof tui.Text> {
+	// OMP 19.2's host accepts nodes; the 19.1 development types still describe Text.
+	if ("jsx" in tui && typeof tui.jsx === "function") {
+		return tui.jsx("text", {
+			wrap: "word",
+			spans: spans.map(({ text, color, bold }) => ({ t: sanitizeText(text), s: bold ? `${color} strong` : color })),
+		}) as InstanceType<typeof tui.Text>;
+	}
+	return new tui.Text(spans.map(({ text, color, bold }) => theme.fg(color, bold ? theme.bold(text) : text)).join(""), 0, 0);
+}
 
 function calculateCost(model: Model, usage: Usage): Usage["cost"] {
 	usage.cost.input = (model.cost.input / 1_000_000) * usage.input;
@@ -1167,49 +1181,48 @@ export default function (pi: ExtensionAPI) {
 			parameters: askClaudeParams,
 			renderCall(args, _options, theme) {
 				const params = readAskClaudeParams(args, false);
-				let text = theme.fg("mdLink", theme.bold("AskClaude "));
+				const spans: AskClaudeSpan[] = [{ text: "AskClaude ", color: "mdLink", bold: true }];
 				const mode = params.mode ?? defaultMode;
 				const tags: string[] = [];
 				if (mode !== defaultMode) tags.push(`mode=${mode}`);
 				if (params.model) tags.push(`model=${params.model}`);
 				if (params.thinking) tags.push(`thinking=${params.thinking}`);
 				if (params.isolated) tags.push("isolated");
-				if (tags.length) text += `${theme.fg("accent", `[${tags.join(", ")}]`)} `;
+				if (tags.length) spans.push({ text: `[${tags.join(", ")}] `, color: "accent" });
 				const truncated = params.prompt.length > PREVIEW_MAX_CHARS ? params.prompt.substring(0, PREVIEW_MAX_CHARS) : params.prompt;
 				const lines = truncated.split("\n").slice(0, PREVIEW_MAX_LINES);
-				text += theme.fg("muted", `"${lines.join("\n")}"`);
-				if (params.prompt.length > PREVIEW_MAX_CHARS || params.prompt.split("\n").length > PREVIEW_MAX_LINES) text += theme.fg("dim", " …");
-				return new Text(text, 0, 0);
+				spans.push({ text: `"${lines.join("\n")}"`, color: "muted" });
+				if (params.prompt.length > PREVIEW_MAX_CHARS || params.prompt.split("\n").length > PREVIEW_MAX_LINES) spans.push({ text: " …", color: "dim" });
+				return renderAskClaude(theme, spans);
 			},
 			renderResult(result, { expanded, isPartial }, theme) {
 				if (isPartial) {
 					const status = result.content[0]?.type === "text" ? result.content[0].text : "working...";
-					return new Text(theme.fg("mdLink", "◉ Claude Code ") + theme.fg("muted", status), 0, 0);
+					return renderAskClaude(theme, [{ text: "◉ Claude Code ", color: "mdLink" }, { text: status, color: "muted" }]);
 				}
 
 				const details = result.details as { prompt?: string; executionTime?: number; actions?: string; error?: boolean } | undefined;
 				const body = result.content[0]?.type === "text" ? result.content[0].text : "";
 
-				let text = details?.error
-					? theme.fg("error", "✗ Claude Code error")
-					: theme.fg("mdLink", "✓ Claude Code");
+				const spans: AskClaudeSpan[] = [details?.error
+					? { text: "✗ Claude Code error", color: "error" }
+					: { text: "✓ Claude Code", color: "mdLink" }];
 
-				if (details?.executionTime) text += ` ${theme.fg("dim", `${(details.executionTime / 1000).toFixed(1)}s`)}`;
-				if (details?.actions) text += ` ${theme.fg("muted", details.actions)}`;
+				if (details?.executionTime) spans.push({ text: ` ${(details.executionTime / 1000).toFixed(1)}s`, color: "dim" });
+				if (details?.actions) spans.push({ text: ` ${details.actions}`, color: "muted" });
 
 				if (expanded) {
-					if (details?.prompt) text += `\n${theme.fg("dim", `Prompt: ${details.prompt}`)}`;
-					if (details?.prompt && body) text += `\n${theme.fg("dim", "─".repeat(40))}`;
-					if (body) text += `\n${theme.fg("toolOutput", body)}`;
+					if (details?.prompt) spans.push({ text: `\nPrompt: ${details.prompt}`, color: "dim" });
+					if (details?.prompt && body) spans.push({ text: `\n${"─".repeat(40)}`, color: "dim" });
+					if (body) spans.push({ text: `\n${body}`, color: "toolOutput" });
 				} else {
 					const truncated = body.length > PREVIEW_MAX_CHARS ? body.substring(0, PREVIEW_MAX_CHARS) : body;
 					const lines = truncated.split("\n").slice(0, PREVIEW_MAX_LINES);
-					if (lines.length) text += `\n${theme.fg("toolOutput", lines.join("\n"))}`;
-					if (body.length > PREVIEW_MAX_CHARS || body.split("\n").length > PREVIEW_MAX_LINES) text += `\n${theme.fg("dim", `… (${keyHint("app.tools.expand", "to expand")})`)}`;
-
+					if (lines.length) spans.push({ text: `\n${lines.join("\n")}`, color: "toolOutput" });
+					if (body.length > PREVIEW_MAX_CHARS || body.split("\n").length > PREVIEW_MAX_LINES) spans.push({ text: "\n… (expand to see more)", color: "dim" });
 				}
 
-				return new Text(text, 0, 0);
+				return renderAskClaude(theme, spans);
 			},
 			async execute(_id, params, signal, onUpdate, ctx) {
 				// Guard: circular delegation

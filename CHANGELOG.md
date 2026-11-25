@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0]
+
+### Fixed
+- Load the bridge and render AskClaude tool calls and results on OMP 19.2.0 using the host's new TUI nodes. OMP 19.0.1 remains the minimum.
+
 ## [0.12.0-beta.3]
 
 ### Fixed
