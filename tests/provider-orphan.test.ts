@@ -117,6 +117,29 @@ test.each([
 	}
 });
 
+test.each([
+	["standalone completions use the caller's prompt", false, false],
+	["session turns keep the Claude Code preset", true, false],
+	["standalone completions do not forward a custom prompt under secret protection", false, true],
+] as const)("%s", async (_name, stateful, protectSecrets) => {
+	const systemPrompt = ["Write a short label for this task.", "Return only the label."];
+	const options = useProvider("label");
+	const settings = Settings.isolated();
+	cfgSecretsEnabled.set(settings, protectSecrets);
+	queryPlan = answer;
+	try {
+		await withActiveSettings(settings, () => __test.streamClaudeAgentSdk(
+			model, { systemPrompt, messages: [user("review the release notes")] },
+			{ ...options, providerSessionState: stateful ? options.providerSessionState : undefined, disableReasoning: true },
+		).result());
+		const sent = requests.at(-1)?.options.systemPrompt;
+		if (stateful || protectSecrets) expect(sent).toMatchObject({ type: "preset", preset: "claude_code" });
+		else expect(sent).toEqual(systemPrompt);
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
 test("a child tool replay leaves the parent's active stream and transcript intact", async () => {
 	const options = useProvider("parent");
 	const first = user("hi");

@@ -23,7 +23,7 @@
 
 Authentication is delegated unchanged to the official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk). The bridge provides no login flow and does not read, store, validate, log, or inject Claude credentials.
 
-**Version 0.12.0 requires Oh My Pi 19.0.1 or newer, including 19.2.0.** See the [changelog](CHANGELOG.md#0120) for behavior changes.
+**Version 0.13.0 requires Oh My Pi 19.0.1 or newer, including 19.2.0.** See the [changelog](CHANGELOG.md#0130) for behavior changes.
 
 <div align="center">
 <a href="assets/claude-bridge1.png"><img src="assets/claude-bridge1.png" width="49%"></a>&nbsp;
@@ -89,6 +89,8 @@ To delegate from another provider instead, just ask: *"Ask Claude to review this
 ## Authentication and billing
 
 The bridge calls the official Claude Agent SDK's `query()` without an `env` override, credential material, auth callback, or login command. Claude Code inherits the parent environment, remains the sole credential resolver, and applies its own authentication precedence. The bridge sets only non-credential runtime controls that disable telemetry, native Claude Code autocompaction, and Claude.ai cloud MCP auto-discovery.
+
+The bridge also defaults `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` to `1` in OMP's environment to skip Claude Code's background session-title requests. Set it to `0` before launching OMP to keep Claude Code's native titles. OMP's own titles and subagent labels are unaffected.
 
 - An existing local Claude Code login currently draws from the user's Claude subscription quota.
 - `ANTHROPIC_API_KEY` uses Anthropic API billing.
@@ -194,6 +196,8 @@ Config is read from `~/.omp/agent/claude-bridge.json` (global) and the project O
 | `pathToClaudeCodeExecutable` | — | Absolute path to Claude Code **2.1.329 or newer**. The bundled CLI is used by default. Only the global user config can override it. |
 
 With `provider.strictMcpConfig: false`, external MCP tools run inside Claude Code, not in OMP. Configure their permissions in Claude Code. By default only the OMP tool server is available, and Claude.ai cloud MCP auto-discovery is disabled.
+
+Standalone OMP completions such as subagent labels use the supplied system prompt instead of the Claude Code preset, unless OMP secret protection is enabled. Conversation turns still use the preset.
 
 ## How it works
 

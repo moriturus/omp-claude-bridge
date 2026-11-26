@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0]
+
+### Changed
+- Disable Claude Code's background session-title generation by default without changing OMP titles or subagent labels.
+
+### Fixed
+- Preserve the system instructions OMP supplies for standalone completions such as subagent label generation.
+
 ## [0.12.0]
 
 ### Fixed
