@@ -890,7 +890,11 @@ async function runProvider(
 			},
 		});
 
-		const append = settings?.appendSystemPrompt === false ? undefined : [
+		// Standalone completions supply their own instructions but have no session obfuscator.
+		const customPrompt = !options?.providerSessionState && !protectSecrets && context.systemPrompt?.length
+			? context.systemPrompt
+			: undefined;
+		const append = customPrompt || settings?.appendSystemPrompt === false ? undefined : [
 			protectSecrets ? undefined : extractAgentsAppend(cwd),
 			extractSkillsBlock(systemPromptText(context.systemPrompt)),
 		].filter(Boolean).join("\n\n") || undefined;
@@ -908,7 +912,7 @@ async function runProvider(
 			strictMcpConfig: settings?.strictMcpConfig !== false || options?.toolChoice === "none",
 			settingSources: protectSecrets ? [] : settings?.appendSystemPrompt === false ? settings.settingSources ?? ["user", "project"] : undefined,
 			pathToClaudeCodeExecutable: settings?.pathToClaudeCodeExecutable,
-			systemPrompt: { type: "preset", preset: "claude_code", append, snapshot: false },
+			systemPrompt: customPrompt ?? { type: "preset", preset: "claude_code", append, snapshot: false },
 			...(reasoningOff ? { thinking: { type: "disabled" } } : {}),
 			...(effort ? { effort, extraArgs: { "thinking-display": "summarized" } } : {}),
 			canUseTool: async (name, input, { toolUseID, mcpServer }) => {
@@ -1067,6 +1071,7 @@ export default function (pi: ExtensionAPI) {
 	process.env.DISABLE_TELEMETRY = "1";
 	process.env.DISABLE_AUTO_COMPACT = "1";
 	process.env.ENABLE_CLAUDEAI_MCP_SERVERS = "0";
+	process.env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE ??= "1";
 
 	const config = loadConfig(process.cwd());
 	let session: BridgeSession | undefined;
