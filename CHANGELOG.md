@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1]
+
+### Fixed
+- Keep OMP side turns such as input prediction and idle recap from replacing the main Claude session. Fork compatible history so the side prompt does not modify the main transcript.
+
 ## [0.13.0]
 
 ### Changed

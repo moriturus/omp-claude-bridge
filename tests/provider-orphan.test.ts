@@ -192,6 +192,31 @@ async function* answer(request: QueryRequest) {
 	yield { type: "result", subtype: "success", is_error: false, result: request.options.resume ? "resumed" : "answered" };
 }
 
+test("prediction and recap fork without replacing the main Claude conversation", async () => {
+	const options = useProvider("main");
+	const first = user("initial", 1);
+	queryPlan = async function* ({ options: request }) {
+		const id = request.forkSession ? "side-claude" : request.resume ?? "main-claude";
+		yield { type: "result", subtype: "success", is_error: false, result: id, session_id: id };
+	};
+	try {
+		const reply = await __test.streamClaudeAgentSdk(model, { messages: [first] }, options).result();
+		const history = [first, reply];
+		for (const [index, prompt] of ["predict the next input", "recap the session"].entries()) {
+			const side = await __test.streamClaudeAgentSdk(model, { messages: [...history, user(prompt, index + 2)] }, {
+				...options, sessionId: `main:side:${index}`, parentSessionId: options.sessionId,
+			}).result();
+			expect(textOf(side)).toBe("side-claude");
+			expect(requests.at(-1)?.options.resume).toBe("main-claude");
+		}
+		const next = await __test.streamClaudeAgentSdk(model, { messages: [...history, user("continue", 4)] }, options).result();
+		expect(textOf(next)).toBe("main-claude");
+		expect(requests.at(-1)?.options.resume).toBe("main-claude");
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
 test.each([false, true])("tool continuation cancels before or after dispatch (already aborted: %s)", async (alreadyAborted) => {
 	const waiting = gate();
 	const initial = new AbortController();

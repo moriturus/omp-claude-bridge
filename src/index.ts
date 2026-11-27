@@ -782,7 +782,9 @@ function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleSt
 	const current = states?.get(PROVIDER_ID);
 	const owner: BridgeSession = current instanceof BridgeSession ? current : new BridgeSession();
 	const run = owner.current;
-	if (run?.turnToolCallIds.size && !run.currentPiStream) {
+	const sideTurn = options?.parentSessionId !== undefined &&
+		options.sessionId?.startsWith(`${options.parentSessionId}:side:`) === true;
+	if (!sideTurn && run?.turnToolCallIds.size && !run.currentPiStream) {
 		const { results, stopIdx } = _extractAllToolResults(context.messages);
 		const matching = results.filter((r) => r.toolCallId && run.turnToolCallIds.has(r.toolCallId));
 		if (matching.length) {
@@ -815,14 +817,19 @@ function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleSt
 		stream.end();
 		return stream;
 	}
-	if (owner !== current) states?.set(PROVIDER_ID, owner);
+	if (!sideTurn && owner !== current) states?.set(PROVIDER_ID, owner);
 
-	// A side request without matching tool results must not replace a live query.
-	const target = run ? new BridgeSession() : owner;
+	// Side prompts must not append to the main transcript or replace its cursor.
+	const target = run || sideTurn ? new BridgeSession() : owner;
+	if (sideTurn) {
+		target.protectSecrets = owner.protectSecrets;
+		target.ui = owner.ui;
+		if (!run) target.transcript = owner.transcript;
+	}
 	const next = new QueryContext(context.messages);
 	startTurn(next, model, stream);
 	target.current = next;
-	void runProvider(model, context, options, target, next, Boolean(states) && !run);
+	void runProvider(model, context, options, target, next, Boolean(states) && !run && !sideTurn, sideTurn);
 	return stream;
 }
 
@@ -833,6 +840,7 @@ async function runProvider(
 	session: BridgeSession,
 	run: QueryContext,
 	bridgeTools: boolean,
+	sideTurn: boolean,
 ): Promise<void> {
 	let running: Query | undefined;
 	let aborted = false;
@@ -881,7 +889,8 @@ async function runProvider(
 			priorCount = context.messages.length;
 			prompt = "Continue from the conversation above.";
 		}
-		let sessionId = prepareSession(protectSecrets ? undefined : session.transcript, context.messages.slice(0, priorCount), cwd, {
+		const previous = protectSecrets ? undefined : session.transcript;
+		let sessionId = prepareSession(previous, context.messages.slice(0, priorCount), cwd, {
 			customToolNameToSdk,
 			modelId: model.id,
 			hooks: {
@@ -889,6 +898,7 @@ async function runProvider(
 				verifyWrittenSession: (path, id, count, dir) => verifyWrittenSession(path, id, count, dir, session.ui),
 			},
 		});
+		const forkSession = sideTurn && previous !== undefined && sessionId === previous.sessionId;
 
 		// Standalone completions supply their own instructions but have no session obfuscator.
 		const customPrompt = !options?.providerSessionState && !protectSecrets && context.systemPrompt?.length
@@ -927,14 +937,15 @@ async function runProvider(
 
 		let tag = "provider";
 		while (prompt && !aborted) {
+			const fork = forkSession && tag === "provider";
 			// Each SDK query owns its MCP transport, so re-create the server on continuation.
 			running = query({
 				prompt: typeof prompt === "string" ? prompt : wrapPromptStream(prompt),
-				options: { ...queryOptions, resume: sessionId, mcpServers: buildMcpServers(mcpTools, run), ...makeCliDebugOptions(tag) },
+				options: { ...queryOptions, resume: sessionId, ...(fork ? { forkSession: true } : {}), mcpServers: buildMcpServers(mcpTools, run), ...makeCliDebugOptions(tag) },
 			});
 			run.streamedMessageId = undefined;
 			try {
-				sessionId = (await consumeQuery(running, customToolNameToPi, model, run, session)) ?? sessionId;
+				sessionId = (await consumeQuery(running, customToolNameToPi, model, run, session)) ?? (fork ? undefined : sessionId);
 			} finally {
 				try { running.close(); } catch (error) { debug("provider: close failed", error); }
 				running = undefined;
