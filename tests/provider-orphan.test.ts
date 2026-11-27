@@ -63,7 +63,16 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({
 	},
 }));
 // Dynamic import: the SDK mock above must be registered before index.ts loads.
+const debugDir = mkdtempSync(join(tmpdir(), "claude-bridge-debug-"));
+const debugPath = join(debugDir, "bridge.log");
+const debugEnv = { CLAUDE_BRIDGE_DEBUG: "1", CLAUDE_BRIDGE_DEBUG_PATH: debugPath };
+const previousDebugEnv = Object.fromEntries(Object.keys(debugEnv).map((key) => [key, process.env[key]]));
+Object.assign(process.env, debugEnv);
 const { __test, default: activate } = await import("../src/index.ts");
+for (const [key, value] of Object.entries(previousDebugEnv)) {
+	if (value === undefined) delete process.env[key];
+	else process.env[key] = value;
+}
 
 const model: Model = {
 	id: "claude-sonnet-4-6", name: "Sonnet", api: "claude-bridge", provider: "claude-bridge", baseUrl: "claude-bridge",
@@ -89,6 +98,7 @@ afterAll(() => {
 	if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
 	else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir;
 	rmSync(claudeDir, { recursive: true, force: true });
+	rmSync(debugDir, { recursive: true, force: true });
 });
 
 test.each([
@@ -253,6 +263,65 @@ test.each([false, true])("tool continuation cancels before or after dispatch (al
 		expect(textOf(next)).toBe("read available");
 	} finally {
 		waiting.open();
+		queryPlan = undefined;
+	}
+});
+
+test("a compacted tool turn imports its result without feeding the old Claude query", async () => {
+	const options = useProvider("compact-continuation");
+	const tools = [{ name: "read", description: "Read", parameters: { type: "object", properties: {} } }] as Context["tools"];
+	const intro: Context["messages"][number] = { role: "developer", content: [{ type: "text", text: "persistent instructions" }], timestamp: 1 };
+	const waiting = gate();
+	const oldResult = Promise.withResolvers<unknown>();
+	queryPlan = async function* ({ options: sdk }) {
+		if (sdk.resume) {
+			const transcript = readFileSync(getSessionPath(sdk.resume, options.cwd, claudeDir), "utf8");
+			expect(transcript).toContain("summary of the earlier conversation");
+			expect(transcript).not.toContain("discarded full history");
+			expect(transcript).toContain('"type":"tool_result"');
+			expect(transcript.match(/the actual file contents/g)).toHaveLength(1);
+			expect(sdk.mcpServers?.["custom-tools"]).toBeDefined();
+			const events = [
+				{ id: "first", usage: { input_tokens: 3, cache_read_input_tokens: 20, cache_creation_input_tokens: 7 } },
+				{ id: "second", usage: { input_tokens: 2, cache_read_input_tokens: 40, cache_creation_input_tokens: 8 } },
+			];
+			for (const message of events) yield { type: "stream_event", event: { type: "message_start", message } };
+			yield { type: "result", subtype: "success", is_error: false, result: "answered from compacted history" };
+			return;
+		}
+		yield { type: "system", subtype: "init", session_id: "old-uncompacted-session" };
+		yield { type: "assistant", message: { id: "call", content: [
+			{ type: "tool_use", id: "call_compact", name: "mcp__custom-tools__read", input: {} },
+		] } };
+		const decision = await sdk.canUseTool!("mcp__custom-tools__read", {}, {
+			signal: new AbortController().signal, toolUseID: "call_compact", mcpServer: { name: "custom-tools", source: "sdk" },
+		});
+		if (decision.behavior !== "allow") throw new Error("The bridge rejected its own tool");
+		const server = sdk.mcpServers?.["custom-tools"];
+		if (!server || !("instance" in server)) throw new Error("Expected an SDK MCP server");
+		const instance = server.instance as unknown as { tools: { handler(input: object): Promise<unknown> }[] };
+		const result = instance.tools[0].handler(decision.updatedInput ?? {});
+		waiting.open();
+		oldResult.resolve(await result);
+		yield { type: "result", subtype: "success", is_error: false, result: "answered from the old history" };
+	};
+	try {
+		const call = await __test.streamClaudeAgentSdk(model, { messages: [intro, user("discarded full history", 2)], tools }, options).result();
+		expect(call.stopReason).toBe("toolUse");
+		await waiting.promise;
+		const logOffset = readFileSync(debugPath, "utf8").length;
+		const summary = { ...user("summary of the earlier conversation", 3), role: "user" as const, historyRewriteAt: 3 };
+		const outcome = await __test.streamClaudeAgentSdk(model, { tools, messages: [intro, summary, call, {
+			role: "toolResult", toolCallId: "call_compact", toolName: "read", content: [{ type: "text", text: "the actual file contents" }], isError: false, timestamp: 4,
+		}] }, options).result();
+		expect(textOf(outcome)).toBe("answered from compacted history");
+		expect(await oldResult.promise).toMatchObject({ isError: true });
+		expect(outcome.usage.totalTokens).toBe(80);
+		const log = readFileSync(debugPath, "utf8").slice(logOffset);
+		expect(log).toContain("syncResult: path=rebuild");
+		expect(log).toMatch(/usage: requestInput=30\b[^\n]*cumulativeTotal=30\b/);
+		expect(log).toMatch(/usage: requestInput=50\b[^\n]*cumulativeTotal=80\b/);
+	} finally {
 		queryPlan = undefined;
 	}
 });

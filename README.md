@@ -212,6 +212,8 @@ Set `CLAUDE_BRIDGE_DEBUG=1` for detailed logs:
 
 When filing a session-resume bug (e.g. "No conversation found"), the `syncResult:` lines from the bridge log plus the matching `cc-cli-logs/` file are the most useful attachments.
 
+On `usage:` lines, `requestInput` counts the current Claude request's input, including cache reads and writes. `cumulativeTotal` counts input and output across Claude requests in the current OMP response. To diagnose repeated compaction, compare `requestInput` before and after a `syncResult: path=rebuild` line.
+
 ## Development
 
 ```bash
