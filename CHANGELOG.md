@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.15.0-beta.1]
+## [0.15.0]
 
 ### Changed
 - Keep the bridged OMP tool schemas on side turns such as composer predictions and idle recaps to preserve the cacheable prompt prefix. Side turns still cannot execute tools or modify the main Claude transcript.
