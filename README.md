@@ -203,6 +203,8 @@ Standalone OMP completions such as subagent labels use the supplied system promp
 
 The bridge registers the canonical OMP Anthropic catalog entries. Each OMP session owns its Claude transport and transcript independently. `/fresh` gives the current history a new Claude session, while `/clear` starts without the old history. AskClaude uses a temporary copy of the current OMP history unless `isolated` is set. The Agent SDK resolves authentication.
 
+OMP side requests such as composer predictions and recaps keep the bridged tool definitions for prompt-cache reuse, but cannot execute tools. Compatible side requests fork the Claude transcript rather than appending to the main conversation.
+
 ## Debugging
 
 Set `CLAUDE_BRIDGE_DEBUG=1` for detailed logs:

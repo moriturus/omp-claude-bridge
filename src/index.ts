@@ -478,7 +478,7 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 
 const OMP_TOOL_USE_ID = "__omp_tool_use_id";
 
-function buildMcpServers(tools: Tool[], run: QueryContext): Options["mcpServers"] {
+function buildMcpServers(tools: Tool[], run: QueryContext, executable: boolean): Options["mcpServers"] {
 	if (!tools.length) return undefined;
 	const server = createSdkMcpServer({
 		name: MCP_SERVER_NAME,
@@ -489,6 +489,7 @@ function buildMcpServers(tools: Tool[], run: QueryContext): Options["mcpServers"
 			description: tool.description,
 			inputSchema: { ...jsonSchemaToZodShape(tool.parameters), [OMP_TOOL_USE_ID]: z.string().optional() },
 			handler: async (args): Promise<McpResult> => {
+				if (!executable) return { isError: true, content: [{ type: "text", text: "Tools are disabled for this side turn." }] };
 				const id = args[OMP_TOOL_USE_ID];
 				if (typeof id !== "string" || run.approvedToolCalls.get(id) !== tool.name) {
 					return { isError: true, content: [{ type: "text", text: "Missing bridge tool invocation ID" }] };
@@ -890,9 +891,11 @@ async function runProvider(
 		const settings = config.provider;
 		const protectSecrets = session.protectSecrets ?? secretsEnabled(cwd);
 		const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(
-			bridgeTools && options?.toolChoice !== "none" ? context : { ...context, tools: undefined },
+			(bridgeTools || sideTurn) && options?.toolChoice !== "none" ? context : { ...context, tools: undefined },
 			config.askClaude?.name ?? "AskClaude",
 		);
+		// Keep the schemas for the cache prefix without forwarding SDK tool calls to OMP.
+		if (!bridgeTools) customToolNameToPi.clear();
 		let priorCount = context.messages.length;
 		while (priorCount > 0) {
 			const role = context.messages[priorCount - 1].role;
@@ -934,12 +937,19 @@ async function runProvider(
 			permissionMode: "default",
 			includePartialMessages: true,
 			verbatimPrompts: true,
-			strictMcpConfig: settings?.strictMcpConfig !== false || options?.toolChoice === "none",
+			strictMcpConfig: sideTurn || settings?.strictMcpConfig !== false || options?.toolChoice === "none",
 			settingSources: protectSecrets ? [] : settings?.appendSystemPrompt === false ? settings.settingSources ?? ["user", "project"] : undefined,
 			pathToClaudeCodeExecutable: settings?.pathToClaudeCodeExecutable,
 			systemPrompt: customPrompt ?? { type: "preset", preset: "claude_code", append, snapshot: false },
 			...(reasoningOff ? { thinking: { type: "disabled" } } : {}),
 			...(effort ? { effort, extraArgs: { "thinking-display": "summarized" } } : {}),
+			...(sideTurn ? { hooks: { PreToolUse: [{ hooks: [async () => ({
+				hookSpecificOutput: {
+					hookEventName: "PreToolUse" as const,
+					permissionDecision: "deny" as const,
+					permissionDecisionReason: "Tools are disabled for this side turn.",
+				},
+			})] }] } } : {}),
 			canUseTool: async (name, input, { toolUseID, mcpServer }) => {
 				const toolName = customToolNameToPi.get(name);
 				if (!toolName || !toolUseID || mcpServer?.source !== "sdk" || mcpServer.name !== MCP_SERVER_NAME || aborted) {
@@ -956,7 +966,7 @@ async function runProvider(
 			// Each SDK query owns its MCP transport, so re-create the server on continuation.
 			running = query({
 				prompt: typeof prompt === "string" ? prompt : wrapPromptStream(prompt),
-				options: { ...queryOptions, resume: sessionId, ...(fork ? { forkSession: true } : {}), mcpServers: buildMcpServers(mcpTools, run), ...makeCliDebugOptions(tag) },
+				options: { ...queryOptions, resume: sessionId, ...(fork ? { forkSession: true } : {}), mcpServers: buildMcpServers(mcpTools, run, bridgeTools), ...makeCliDebugOptions(tag) },
 			});
 			run.streamedMessageId = undefined;
 			try {

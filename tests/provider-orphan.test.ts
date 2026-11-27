@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { z } from "zod";
 
 type Gate = { promise: Promise<void>; open: () => void };
 function gate(): Gate {
@@ -202,24 +203,52 @@ async function* answer(request: QueryRequest) {
 	yield { type: "result", subtype: "success", is_error: false, result: request.options.resume ? "resumed" : "answered" };
 }
 
-test("prediction and recap fork without replacing the main Claude conversation", async () => {
+test("prediction and recap fork with the main tool schemas but cannot execute tools", async () => {
 	const options = useProvider("main");
 	const first = user("initial", 1);
+	const tools = [{ name: "write", description: "Write a file", parameters: { type: "object", properties: { path: { type: "string" } } } }] as Context["tools"];
+	let mainTools: unknown;
 	queryPlan = async function* ({ options: request }) {
 		const id = request.forkSession ? "side-claude" : request.resume ?? "main-claude";
+		const server = request.mcpServers?.["custom-tools"];
+		if (!server || !("instance" in server)) throw new Error("Expected the main MCP definitions");
+		const instance = server.instance as unknown as { tools: {
+			name: string; description: string; inputSchema: Record<string, z.ZodType>; handler(input: object): Promise<unknown>;
+		}[] };
+		const schemas = instance.tools.map(({ name, description, inputSchema }) => ({
+			name, description, schema: z.toJSONSchema(z.object(inputSchema)),
+		}));
+		if (request.forkSession) {
+			expect(schemas).toEqual(mainTools);
+			const call = { name: "mcp__custom-tools__write", id: "side-write", input: { path: "must-not-write" } };
+			const signal = new AbortController().signal;
+			const hook = request.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(await hook?.({
+				hook_event_name: "PreToolUse", session_id: id, transcript_path: "", cwd: options.cwd,
+				tool_name: call.name, tool_input: call.input, tool_use_id: call.id,
+			}, call.id, { signal })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
+			const decision = await request.canUseTool!(call.name, call.input, {
+				signal, toolUseID: call.id, mcpServer: { name: "custom-tools", source: "sdk" },
+			});
+			expect(decision).toMatchObject({ behavior: "deny" });
+			expect(await instance.tools[0].handler({ ...call.input, __omp_tool_use_id: call.id })).toMatchObject({ isError: true });
+			yield { type: "assistant", message: { id: "attempt", content: [{ type: "tool_use", ...call }] } };
+		} else {
+			mainTools = schemas;
+		}
 		yield { type: "result", subtype: "success", is_error: false, result: id, session_id: id };
 	};
 	try {
-		const reply = await __test.streamClaudeAgentSdk(model, { messages: [first] }, options).result();
+		const reply = await __test.streamClaudeAgentSdk(model, { messages: [first], tools }, options).result();
 		const history = [first, reply];
 		for (const [index, prompt] of ["predict the next input", "recap the session"].entries()) {
-			const side = await __test.streamClaudeAgentSdk(model, { messages: [...history, user(prompt, index + 2)] }, {
+			const side = await __test.streamClaudeAgentSdk(model, { messages: [...history, user(prompt, index + 2)], tools }, {
 				...options, sessionId: `main:side:${index}`, parentSessionId: options.sessionId,
 			}).result();
 			expect(textOf(side)).toBe("side-claude");
 			expect(requests.at(-1)?.options.resume).toBe("main-claude");
 		}
-		const next = await __test.streamClaudeAgentSdk(model, { messages: [...history, user("continue", 4)] }, options).result();
+		const next = await __test.streamClaudeAgentSdk(model, { messages: [...history, user("continue", 4)], tools }, options).result();
 		expect(textOf(next)).toBe("main-claude");
 		expect(requests.at(-1)?.options.resume).toBe("main-claude");
 	} finally {
