@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0]
+
+### Fixed
+- Restart a Claude query paused on OMP tools when OMP rewrites the conversation history. Import the compacted history and completed tool results instead of feeding them to the pre-compaction query.
+
+### Changed
+- Bridge debug logs show `requestInput` separately from `cumulativeTotal` and the cumulative token breakdown for the current OMP response.
+
 ## [0.13.1]
 
 ### Fixed

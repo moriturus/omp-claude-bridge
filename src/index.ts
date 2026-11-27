@@ -528,10 +528,13 @@ function updateUsage(output: AssistantMessage, usage: {
 	if (reasoning != null) (output.usage as typeof output.usage & { reasoning?: number }).reasoning = reasoning;
 	output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 	calculateCost(model, output.usage);
-	const promptTokens = output.usage.input + output.usage.cacheRead + output.usage.cacheWrite;
-	const cachePct = promptTokens > 0 ? Math.round(output.usage.cacheRead / promptTokens * 100) : 0;
-	const reasoningText = reasoning != null ? ` reasoning=${reasoning}` : "";
-	debug(`usage: in=${output.usage.input} out=${output.usage.output} cacheRead=${output.usage.cacheRead} cacheWrite=${output.usage.cacheWrite} total=${output.usage.totalTokens}${reasoningText} cachePct=${cachePct}% model=${model.id}`);
+	if (DEBUG) {
+		const promptTokens = output.usage.input + output.usage.cacheRead + output.usage.cacheWrite;
+		const requestInput = promptTokens - ((base?.input ?? 0) + (base?.cacheRead ?? 0) + (base?.cacheWrite ?? 0));
+		const cachePct = promptTokens > 0 ? Math.round(output.usage.cacheRead / promptTokens * 100) : 0;
+		const reasoningText = reasoning != null ? ` reasoning=${reasoning}` : "";
+		debug(`usage: requestInput=${requestInput} cumulativeTotal=${output.usage.totalTokens} cumulativeIn=${output.usage.input} cumulativeOut=${output.usage.output} cumulativeCacheRead=${output.usage.cacheRead} cumulativeCacheWrite=${output.usage.cacheWrite} cumulativeCachePct=${cachePct}%${reasoningText} model=${model.id}`);
+	}
 }
 
 // Log the *served* context window reported by an SDK result message
@@ -775,15 +778,27 @@ async function consumeQuery(
 	return sessionId;
 }
 
+function historyBoundary(messages: Context["messages"]): string | undefined {
+	const summary = messages.find((message) => message.role === "user" && message.historyRewriteAt !== undefined);
+	return messageAnchor(summary ?? messages[0]);
+}
+
 function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
 	const stream = newAssistantMessageEventStream();
 
 	const states = options?.providerSessionState;
 	const current = states?.get(PROVIDER_ID);
 	const owner: BridgeSession = current instanceof BridgeSession ? current : new BridgeSession();
-	const run = owner.current;
+	let run = owner.current;
 	const sideTurn = options?.parentSessionId !== undefined &&
 		options.sessionId?.startsWith(`${options.parentSessionId}:side:`) === true;
+	// A committed OMP rewrite replaces the history, not the SDK query paused on tools.
+	if (!sideTurn && run?.turnToolCallIds.size && !run.currentPiStream &&
+		historyBoundary(context.messages) !== historyBoundary(run.latestMessages)) {
+		debug("provider: restarting SDK query after history rewrite");
+		run.abort();
+		run = undefined;
+	}
 	if (!sideTurn && run?.turnToolCallIds.size && !run.currentPiStream) {
 		const { results, stopIdx } = _extractAllToolResults(context.messages);
 		const matching = results.filter((r) => r.toolCallId && run.turnToolCallIds.has(r.toolCallId));
