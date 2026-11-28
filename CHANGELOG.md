@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.1]
+
+### Changed
+- Debug logs report malformed OMP skills and tool-command sections without logging their contents or changing prompt forwarding.
+- Keep tool-call approval, result delivery, and cleanup together in the query state without changing how tool calls are relayed.
+
 ## [0.15.0]
 
 ### Changed

@@ -1,6 +1,6 @@
 {
 	"name": "omp-claude-bridge",
-	"version": "0.15.0",
+	"version": "0.15.1",
 	"private": false,
 	"description": "Oh My Pi extension that runs Claude Code through the official Claude Agent SDK as a model provider and AskClaude delegation tool.",
 	"keywords": [

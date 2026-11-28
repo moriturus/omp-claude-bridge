@@ -439,10 +439,16 @@ function secretsEnabled(cwd: string): boolean {
 
 function bashDescription(tool: Tool, systemPrompt: Context["systemPrompt"]): string {
 	// shortcut: read OMP's rendered command sections until the provider context exposes a structured catalog.
-	const commands = /^# Tool Commands\nEach listed tool is also a command in `[^`\n]+`: ([\s\S]*?)\n⁂ /m.exec(systemPrompt?.[0] ?? "")?.[1];
+	const host = systemPrompt?.[0] ?? "";
+	const commands = /^# Tool Commands\nEach listed tool is also a command in `[^`\n]+`: ([\s\S]*?)\n⁂ /m.exec(host)?.[1];
 	const project = systemPrompt?.findLast((block) => block.startsWith("<project-context>\n"));
 	const end = project?.lastIndexOf("\n</project-context>\n") ?? -1;
-	const routes = end < 0 ? undefined : /^## MCP Tool Commands\n+(?:Run each as a command with the bash tool\.[^\n]*\n+)?((?:- [^\n]+\n*)*(?:Additional mounted MCP tools omitted:[^\n]+)?)/m.exec(project?.slice(end) ?? "")?.[1].trim();
+	const projectAppend = end < 0 ? undefined : project?.slice(end);
+	const routes = projectAppend === undefined ? undefined : /^## MCP Tool Commands\n+(?:Run each as a command with the bash tool\.[^\n]*\n+)?((?:- [^\n]+\n*)*(?:Additional mounted MCP tools omitted:[^\n]+)?)/m.exec(projectAppend)?.[1].trim();
+	if (DEBUG) {
+		if (!commands && /^# Tool Commands[ \t]*$/m.test(host)) debug("prompt extraction: malformed OMP Tool Commands section");
+		if (!routes && projectAppend && /^## MCP Tool Commands[ \t]*$/m.test(projectAppend)) debug("prompt extraction: malformed OMP MCP Tool Commands section");
+	}
 	if (!commands && !routes) return tool.description;
 	return [
 		tool.description,
@@ -490,19 +496,7 @@ function buildMcpServers(tools: Tool[], run: QueryContext, executable: boolean):
 			inputSchema: { ...jsonSchemaToZodShape(tool.parameters), [OMP_TOOL_USE_ID]: z.string().optional() },
 			handler: async (args): Promise<McpResult> => {
 				if (!executable) return { isError: true, content: [{ type: "text", text: "Tools are disabled for this side turn." }] };
-				const id = args[OMP_TOOL_USE_ID];
-				if (typeof id !== "string" || run.approvedToolCalls.get(id) !== tool.name) {
-					return { isError: true, content: [{ type: "text", text: "Missing bridge tool invocation ID" }] };
-				}
-				run.approvedToolCalls.delete(id);
-				const result = run.pendingResults.get(id);
-				if (result) {
-					run.pendingResults.delete(id);
-					return result;
-				}
-				const { promise, resolve } = Promise.withResolvers<McpResult>();
-				run.pendingToolCalls.set(id, resolve);
-				return promise;
+				return run.collectToolResult(args[OMP_TOOL_USE_ID], tool.name);
 			},
 		})),
 	});
@@ -812,18 +806,7 @@ function streamClaudeAgentSdk(model: Model, context: Context, options?: SimpleSt
 				const message = context.messages[i];
 				if (message.role !== "toolResult") run.deferredMessages.push(message);
 			}
-			const delivered = new Map(matching.map((result) => [result.toolCallId, result]));
-			for (const id of run.turnToolCallIds) {
-				const result = delivered.get(id) ?? { isError: true, content: [{ type: "text" as const, text: "Oh My Pi did not return a result for this call" }] };
-				const resolve = run.pendingToolCalls.get(id);
-				if (resolve) {
-					run.pendingToolCalls.delete(id);
-					resolve(result);
-				} else {
-					run.pendingResults.set(id, result);
-				}
-			}
-			run.turnToolCallIds.clear();
+			run.deliverToolResults(matching);
 			return stream;
 		}
 	}
@@ -862,12 +845,7 @@ async function runProvider(
 	let aborted = false;
 	const release = () => {
 		if (session.current === run) session.current = undefined;
-		for (const resolve of run.pendingToolCalls.values()) {
-			resolve({ isError: true, content: [{ type: "text", text: "Claude Code query ended" }] });
-		}
-		run.pendingToolCalls.clear();
-		run.pendingResults.clear();
-		run.approvedToolCalls.clear();
+		run.releaseToolCalls();
 		run.setAbortSignal();
 	};
 	run.abort = () => {
@@ -924,7 +902,7 @@ async function runProvider(
 			: undefined;
 		const append = customPrompt || settings?.appendSystemPrompt === false ? undefined : [
 			protectSecrets ? undefined : extractAgentsAppend(cwd),
-			extractSkillsBlock(systemPromptText(context.systemPrompt)),
+			extractSkillsBlock(systemPromptText(context.systemPrompt), DEBUG ? debug : undefined),
 		].filter(Boolean).join("\n\n") || undefined;
 		const reasoningOff = options?.disableReasoning === true || options?.forceReasoningOff === true;
 		const effort = !reasoningOff && options?.reasoning
@@ -955,7 +933,7 @@ async function runProvider(
 				if (!toolName || !toolUseID || mcpServer?.source !== "sdk" || mcpServer.name !== MCP_SERVER_NAME || aborted) {
 					return { behavior: "deny", message: "This tool requires an explicit Claude Code permission rule." };
 				}
-				run.approvedToolCalls.set(toolUseID, toolName);
+				run.approveToolCall(toolUseID, toolName);
 				return { behavior: "allow", updatedInput: { ...input, [OMP_TOOL_USE_ID]: toolUseID } };
 			},
 		};
@@ -1021,7 +999,7 @@ async function promptAndWait(
 	const resume = prepareSession(undefined, history, cwd, {
 		modelId, hooks: { debug, verifyWrittenSession, debugSessionPaths },
 	});
-	const skills = options.appendSkills !== false ? extractSkillsBlock(options.systemPrompt) : undefined;
+	const skills = options.appendSkills !== false ? extractSkillsBlock(options.systemPrompt, DEBUG ? debug : undefined) : undefined;
 	const effort = options.thinking ? REASONING_TO_EFFORT[options.thinking] : undefined;
 	let sdkQuery: Query | undefined;
 	const onAbort = () => {
