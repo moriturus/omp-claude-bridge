@@ -527,6 +527,37 @@ test("Claude can discover OMP tool commands through its bridged bash tool", asyn
 	}
 });
 
+test("malformed OMP prompt sections are logged without appending their contents", async () => {
+	const options = useProvider("malformed-prompt");
+	const context: Context = {
+		messages: [user("continue")],
+		tools: [{ name: "bash", description: "Run a shell command", parameters: { type: "object", properties: {} } }] as Context["tools"],
+		systemPrompt: [
+			"Renamed lead-in\n<skills>\n- private fixture skill\n</skills>\n\n# Tool Commands\nReworded commands\n\n⁂ Tool Policy",
+			"<project-context>\nFixture project\n</project-context>\n\n## MCP Tool Commands\n\nReworded routes",
+		],
+	};
+	const logOffset = readFileSync(debugPath, "utf8").length;
+	queryPlan = answer;
+	try {
+		const output = await __test.streamClaudeAgentSdk(model, context, options).result();
+		expect(textOf(output)).toBe("answered");
+		const sent = requests.at(-1)?.options;
+		expect(JSON.stringify(sent?.systemPrompt)).not.toContain("private fixture skill");
+		const server = sent?.mcpServers?.["custom-tools"];
+		if (!server || !("instance" in server)) throw new Error("Expected an SDK MCP server");
+		const instance = server.instance as unknown as { tools: { description: string }[] };
+		expect(instance.tools[0].description).toBe("Run a shell command");
+		const log = readFileSync(debugPath, "utf8").slice(logOffset);
+		expect(log).toContain("malformed OMP skills section (missing lead-in)");
+		expect(log).toContain("malformed OMP Tool Commands section");
+		expect(log).toContain("malformed OMP MCP Tool Commands section");
+		expect(log).not.toContain("private fixture skill");
+	} finally {
+		queryPlan = undefined;
+	}
+});
+
 test("a skipped MCP call cannot shift another result; external tools and steering stay on their own paths", async () => {
 	const source = { name: "custom-tools", source: "sdk" };
 	const local = "mcp__custom-tools__read";
@@ -560,6 +591,8 @@ test("a skipped MCP call cannot shift another result; external tools and steerin
 		if (!server || !("instance" in server)) throw new Error("Expected an SDK MCP server");
 		const instance = server.instance as unknown as { tools: { handler(input: object): Promise<unknown> }[] };
 		observed.resolve(await instance.tools[0].handler(decision.updatedInput ?? {}));
+		const replay = await Promise.race([instance.tools[0].handler(decision.updatedInput ?? {}), setImmediate("pending")]);
+		expect(replay).toMatchObject({ isError: true });
 		yield { type: "result", subtype: "success", is_error: false, result: "original, " };
 	};
 	try {

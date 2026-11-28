@@ -212,6 +212,8 @@ Set `CLAUDE_BRIDGE_DEBUG=1` for detailed logs:
 - **Bridge log** — `~/.omp/agent/claude-bridge.log`: every provider call, session-sync decision, tool-result delivery, and Claude Code stderr. Override the path with `CLAUDE_BRIDGE_DEBUG_PATH`.
 - **Per-query CLI logs** — `~/.omp/agent/cc-cli-logs/<timestamp>-<tag>-<seq>.log`: the Claude Code subprocess's own debug stream, one file per query. Tags are `provider`, `continuation`, or `askclaude`.
 
+Prompt extraction diagnostics identify malformed OMP skills and tool-command sections without including their contents.
+
 When filing a session-resume bug (e.g. "No conversation found"), the `syncResult:` lines from the bridge log plus the matching `cc-cli-logs/` file are the most useful attachments.
 
 On `usage:` lines, `requestInput` counts the current Claude request's input, including cache reads and writes. `cumulativeTotal` counts input and output across Claude requests in the current OMP response. To diagnose repeated compaction, compare `requestInput` before and after a `syncResult: path=rebuild` line.
